@@ -1,0 +1,105 @@
+syntax = "proto3";
+
+package api.bigmarket.v1;
+
+import "google/api/annotations.proto";
+
+option go_package = "big-market-kratos/api/bigmarket/v1;v1";
+option java_multiple_files = true;
+option java_package = "api.bigmarket.v1";
+
+service Activity {
+  // 活动装配
+  // 对应: GET /api/v1/raffle/activity/armory?activity_id=xxx
+  rpc RaffleActivityArmory(RaffleActivityArmoryRequest) returns (RaffleActivityArmoryReply) {
+    option (google.api.http) = {get: "/api/v1/strategy/raffle/activity/armory"};
+  }
+
+  // 抽奖 (聚合接口)
+  // 对应: POST /api/v1/raffle/activity/draw
+  rpc Draw(DrawRequest) returns (DrawReply) {
+    option (google.api.http) = {
+      post: "/api/v1/strategy/raffle/activity/draw"
+      body: "*"
+    };
+  }
+
+  // 签到返利
+  // 对应: POST /api/v1/raffle/activity/calendar_sign_rebate
+  rpc CalendarSignRebate(CalendarSignRebateRequest) returns (CalendarSignRebateReply) {
+    option (google.api.http) = {
+      post: "/api/v1/strategy/raffle/activity/calendar_sign_rebate"
+      body: "*"
+    };
+  }
+
+  // 判断是否签到
+  // 对应: POST /api/v1/raffle/activity/is_calendar_sign_rebate
+  rpc IsCalendarSignRebate(IsCalendarSignRebateRequest) returns (IsCalendarSignRebateReply) {
+    option (google.api.http) = {
+      post: "/api/v1/strategy/raffle/activity/is_calendar_sign_rebate"
+      body: "*"
+    };
+  }
+
+  // 查询用户活动账户
+  // 对应: POST /api/v1/raffle/activity/query_user_activity_account
+  rpc QueryUserActivityAccount(QueryUserActivityAccountRequest) returns (QueryUserActivityAccountReply) {
+    option (google.api.http) = {
+      post: "/api/v1/strategy/raffle/activity/query_user_activity_account"
+      body: "*"
+    };
+  }
+}
+
+// --- Request/Reply Definitions ---
+
+message RaffleActivityArmoryRequest {
+  int64 activity_id = 1;
+}
+
+message RaffleActivityArmoryReply {
+  bool success = 1;
+}
+
+message DrawRequest {
+  string user_id = 1;
+  int64 activity_id = 2;
+}
+
+message DrawReply {
+  int64 award_id = 1;
+  string award_title = 2;
+  int32 award_index = 3;
+}
+
+message CalendarSignRebateRequest {
+  string user_id = 1;
+}
+
+message CalendarSignRebateReply {
+  bool success = 1;
+}
+
+message IsCalendarSignRebateRequest {
+  string user_id = 1;
+}
+
+message IsCalendarSignRebateReply {
+  bool is_signed = 1;
+}
+
+message QueryUserActivityAccountRequest {
+  string user_id = 1;
+  int64 activity_id = 2;
+}
+
+message QueryUserActivityAccountReply {
+  int64 activity_id = 1;
+  int64 total_count = 2;
+  int64 total_count_surplus = 3;
+  int64 day_count = 4;
+  int64 day_count_surplus = 5;
+  int64 month_count = 6;
+  int64 month_count_surplus = 7;
+}

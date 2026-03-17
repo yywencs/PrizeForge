@@ -1,0 +1,115 @@
+syntax = "proto3";
+package kratos.api;
+
+import "google/protobuf/duration.proto";
+
+option go_package = "big-market-kratos/internal/conf;conf";
+
+message Bootstrap {
+  Server server = 1;
+  RabbitMQ rabbitmq = 2;
+  Data data = 3;
+  Asynq asynq = 4;
+  Log log = 5;
+  DccConfig dcc = 6;
+}
+
+message Server {
+  message HTTP {
+    string network = 1;
+    string addr = 2;
+    google.protobuf.Duration timeout = 3;
+  }
+  message GRPC {
+    string network = 1;
+    string addr = 2;
+    google.protobuf.Duration timeout = 3;
+  }
+  HTTP http = 1;
+  GRPC grpc = 2;
+}
+
+message RabbitMQ {
+  message Listener {
+    message Simple {
+      int32 prefetch = 1;
+    }
+    Simple simple = 1;
+  }
+  message Topic {
+    string activity_sku_stock_zero = 1;
+    string send_award = 2;
+    string send_rebate = 3;
+  }
+  string addresses = 1;
+  int32 port = 2;
+  string username = 3;
+  string password = 4;
+  Listener listener = 5;
+  Topic topic = 6;
+}
+
+message Data {
+  message Mysql {
+    string dsn = 1;
+    int32 max_open_conns = 2;
+    int32 max_idle_conns = 3;
+    google.protobuf.Duration max_life_time = 4;
+    google.protobuf.Duration max_idle_time = 5;
+    int32 db_count = 6;
+    int32 tb_count = 7;
+  }
+  message Redis {
+    string host = 1;
+    int32 port = 2;
+    int32 db = 3;
+    int32 pool_size = 4;
+    int32 min_idle_size = 5;
+    int32 idle_timeout = 6;
+    int32 connect_timeout = 7;
+    int32 retry_attempts = 8;
+    int32 retry_interval = 9;
+    int32 ping_interval = 10;
+    bool keep_alive = 11;
+  }
+  Mysql mysql = 1;
+  Redis redis = 2;
+  Etcd etcd = 3;
+}
+
+message Etcd {
+  repeated string endpoints = 1;
+  google.protobuf.Duration timeout = 2;
+}
+
+message DccConfig {
+  bool enable_degrade = 1; // 降级开关
+  string black_list = 2; // 黑名单 (对应你 yaml 里的字符串)
+}
+
+message Asynq {
+  message Redis {
+    string host = 1;
+    int32 port = 2;
+    int32 db = 3;
+    int32 pool_size = 4;
+    int32 min_idle_size = 5;
+    int32 idle_timeout = 6;
+    int32 connect_timeout = 7;
+    int32 retry_attempts = 8;
+    int32 retry_interval = 9;
+    int32 ping_interval = 10;
+    bool keep_alive = 11;
+  }
+  Redis redis = 1;
+  int32 concurrency = 2;
+}
+
+message Log {
+  string level = 1;
+  string filename = 2;
+  int32 max_size = 3;
+  int32 max_backups = 4;
+  int32 max_age = 5;
+  bool compress = 6;
+}
