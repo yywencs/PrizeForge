@@ -34,7 +34,7 @@ func (s *TaskUsecase) SendMessage(ctx context.Context, task *Task) error {
 		Data:      data,
 	}
 
-	if err := s.taskRepository.SendAwardMessage(ctx, event); err != nil {
+	if err := s.taskRepository.SendMessage(ctx, task.Topic, event); err != nil {
 		return err
 	}
 	return nil

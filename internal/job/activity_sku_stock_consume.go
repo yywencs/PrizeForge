@@ -2,10 +2,10 @@ package job
 
 import (
 	"big-market-kratos/internal/biz/activity"
+	"big-market-kratos/pkg/logger"
 	"context"
 	"encoding/json"
 	"fmt"
-	"log/slog"
 
 	"github.com/hibiken/asynq"
 )
@@ -32,6 +32,6 @@ func (j *ActivitySkuStockConsumeJob) ProcessTask(ctx context.Context, task *asyn
 		return fmt.Errorf("failed to update activity sku stock: %w", err)
 	}
 
-	slog.Info("ActivitySkuStockConsumeJob success", "sku", skuStockKey.Sku)
+	logger.Info("ActivitySkuStockConsumeJob success", "sku", skuStockKey.Sku)
 	return nil
 }

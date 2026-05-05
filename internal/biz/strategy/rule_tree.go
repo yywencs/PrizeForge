@@ -2,8 +2,8 @@ package strategy
 
 import (
 	"big-market-kratos/pkg/common"
+	"big-market-kratos/pkg/logger"
 	"context"
-	"log/slog"
 	"strconv"
 	"strings"
 )
@@ -26,13 +26,13 @@ func newRuleTreeFactory(repository Repo) *ruleTreeFactory {
 func (f *ruleTreeFactory) newDecisionTreeEngine(ruleTree *RuleTree) (*ruleTreeEngine, error) {
 	// 1. 校验规则树是否为空
 	if ruleTree == nil {
-		slog.Error("规则树引擎执行失败：树对象为空")
+		logger.Error("规则树引擎执行失败：树对象为空")
 		return nil, ErrRuleTreeInvalid
 	}
 
 	// 2. 校验规则树是否包含根节点
 	if _, ok := ruleTree.NodeMap[ruleTree.TreeRootRuleNode]; !ok {
-		slog.Error("规则树引擎执行失败：未找到根节点",
+		logger.Error("规则树引擎执行失败：未找到根节点",
 			"expected_root_node", ruleTree.TreeRootRuleNode,
 		)
 		return nil, ErrRuleTreeInvalid
@@ -126,7 +126,7 @@ func newRuleLockNode() ruleNode {
 	return &ruleLockNode{}
 }
 func (r *ruleLockNode) logic(ctx context.Context, strategyID int64, awardID int64, ruleValue string) (*treeAction, error) {
-	slog.Info("规则过滤-次数锁",
+	logger.Info("规则过滤-次数锁",
 		"strategyID", strategyID,
 		"awardID", awardID,
 		"ruleValue", ruleValue,
@@ -166,7 +166,7 @@ func newRuleLuckNode() ruleNode {
 	return &ruleLuckNode{}
 }
 func (r *ruleLuckNode) logic(ctx context.Context, strategyID int64, awardID int64, ruleValue string) (*treeAction, error) {
-	slog.Info("规则过滤-兜底奖品",
+	logger.Info("规则过滤-兜底奖品",
 		"strategyID", strategyID,
 		"awardID", awardID,
 		"ruleValue", ruleValue,
@@ -184,7 +184,7 @@ func (r *ruleLuckNode) logic(ctx context.Context, strategyID int64, awardID int6
 		panic("兜底奖品规则配置错误，luckAwardID: " + luckAwardID)
 	}
 
-	slog.Info("规则过滤-兜底奖品结果",
+	logger.Info("规则过滤-兜底奖品结果",
 		"strategyID", strategyID,
 		"awardID", luckAwardIDInt64,
 		"awardRuleValue", awardRuleValue,
@@ -207,7 +207,7 @@ func newRuleStockNode(repository Repo) ruleNode {
 }
 
 func (r *ruleStockNode) logic(ctx context.Context, strategyID int64, awardID int64, ruleValue string) (*treeAction, error) {
-	slog.Info("规则过滤-库存扣减",
+	logger.Info("规则过滤-库存扣减",
 		"strategyID", strategyID,
 		"awardID", awardID,
 		"ruleValue", ruleValue,
@@ -219,7 +219,7 @@ func (r *ruleStockNode) logic(ctx context.Context, strategyID int64, awardID int
 	}
 
 	if status {
-		slog.Info("规则过滤-库存扣减-成功",
+		logger.Info("规则过滤-库存扣减-成功",
 			"strategyID", strategyID,
 			"awardID", awardID,
 		)
@@ -237,7 +237,7 @@ func (r *ruleStockNode) logic(ctx context.Context, strategyID int64, awardID int
 		}, nil
 	}
 
-	slog.Info("规则过滤-库存扣减-告警，库存不足",
+	logger.Info("规则过滤-库存扣减-告警，库存不足",
 		"strategyID", strategyID,
 		"awardID", awardID,
 		"ruleValue", ruleValue,

@@ -4,7 +4,6 @@ import (
 	"big-market-kratos/pkg/common"
 	"big-market-kratos/pkg/xrand"
 	"context"
-	"fmt"
 	"math"
 	mrand "math/rand"
 	"strconv"
@@ -107,13 +106,17 @@ func (s *armoryDispatch) assembleLotteryStrategy(ctx context.Context, strategyID
 	}
 
 	rule_weight := strategyEntity.GetRuleWeight()
-	// 2. 若无规则权重，直接组装默认策略；
-	if rule_weight == "" {
-		err = s.assembleLotteryStrategyWithAwards(ctx, stringStrategyID, strategyAwards)
-		return true, err
+	// 2. 无论是否存在规则权重，都应该组装一份默认策略，作为兜底和全量抽奖池
+	err = s.assembleLotteryStrategyWithAwards(ctx, stringStrategyID, strategyAwards)
+	if err != nil {
+		return false, err
 	}
 
-	// 3. 若存在规则权重，按权重维度拆分奖品并分别组装子策略；
+	// 3. 若无规则权重，组装完默认策略即可返回；若存在规则权重，则继续按权重维度拆分奖品并分别组装子策略；
+	if rule_weight == "" {
+		return true, nil
+	}
+
 	strategyRuleEntity, err := s.repo.QueryStrategyRule(ctx, strategyID, rule_weight)
 	if err != nil {
 		return false, err
@@ -217,21 +220,21 @@ func (s *armoryDispatch) assembleLotteryStrategyWithAwards(ctx context.Context, 
 func (s *armoryDispatch) getRandomAwardID(ctx context.Context, strategyID string) (int64, error) {
 	rateRange, err := s.repo.GetRateRange(ctx, strategyID)
 	if err != nil {
-		return 0, fmt.Errorf("failed to get rate range: %w", err)
+		return 0, ErrStrategyRateRangeFailed.WithCause(err)
 	}
 
 	if rateRange <= 0 {
-		return 0, fmt.Errorf("invalid rate range: %d", rateRange)
+		return 0, ErrStrategyRateRangeInvalid.WithMetadata(map[string]string{"rate_range": strconv.Itoa(rateRange)})
 	}
 
 	randomVal, err := xrand.GetSecureRandomInt(rateRange)
 	if err != nil {
-		return 0, fmt.Errorf("failed to generate random val: %w", err)
+		return 0, ErrStrategyRandomValGenFailed.WithCause(err)
 	}
 
 	awardID, err := s.repo.GetStrategyAwardAssemble(ctx, strategyID, randomVal)
 	if err != nil {
-		return 0, fmt.Errorf("failed to get award assemble: %w", err)
+		return 0, ErrStrategyAwardAssembleFailed.WithCause(err)
 	}
 
 	return awardID, nil

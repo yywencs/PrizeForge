@@ -4,12 +4,20 @@ import (
 	"big-market-kratos/internal/biz/activity"
 	"big-market-kratos/internal/data/po"
 	"big-market-kratos/pkg/cache"
+	"big-market-kratos/pkg/logger"
+	"big-market-kratos/pkg/rabbitmq"
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"strconv"
+	"strings"
 	"time"
 
 	"gorm.io/gorm"
 )
+
+const pendingRaffleOrderTTL = 30 * time.Minute
 
 func (r *Repository) QueryRaffleActivity(ctx context.Context, activityID int64) (*activity.Activity, error) {
 	var activity activity.Activity
@@ -20,10 +28,13 @@ func (r *Repository) QueryRaffleActivity(ctx context.Context, activityID int64) 
 		Ctx:   ctx,
 		Key:   activityKey,
 		Value: &activity,
-		TTL:   10 * time.Minute,
+		TTL:   10 * 24 * time.Hour,
 		Do: func(*cache.Item) (interface{}, error) {
 			var activityPO po.RaffleActivity
-			if err := r.db.Where("activity_id = ?", activityID).First(&activityPO).Error; err != nil {
+			if err := r.db.WithContext(ctx).Where("activity_id = ?", activityID).First(&activityPO).Error; err != nil {
+				if errors.Is(err, gorm.ErrRecordNotFound) {
+					return nil, nil
+				}
 				return nil, err
 			}
 
@@ -46,11 +57,14 @@ func (r *Repository) QueryActivityAccount(ctx context.Context, userID string, ac
 		Ctx:   ctx,
 		Key:   key,
 		Value: &activityAccount,
-		TTL:   10 * time.Minute,
+		TTL:   10 * 24 * time.Hour,
 		Do: func(*cache.Item) (interface{}, error) {
 			var po po.RaffleActivityAccount
 			db, _ := r.routerDB.DBStrategy(userID)
-			if err := db.Where("user_id = ? AND activity_id = ?", userID, activityID).First(&po).Error; err != nil {
+			if err := db.WithContext(ctx).Where("user_id = ? AND activity_id = ?", userID, activityID).First(&po).Error; err != nil {
+				if errors.Is(err, gorm.ErrRecordNotFound) {
+					return nil, nil
+				}
 				return nil, err
 			}
 			return po.ToEntity(), nil
@@ -65,24 +79,199 @@ func (r *Repository) QueryActivityAccount(ctx context.Context, userID string, ac
 }
 
 func (r *Repository) QueryNoUsedRaffleOrder(ctx context.Context, userID string, activityID int64) (*activity.UserRaffleOrder, error) {
-	// 1. 获取分库分表 DB
-	db, tableSuffix := r.routerDB.DBStrategy(userID)
-	if db == nil {
-		return nil, activity.ErrDBRouterError
+	// 1. 先尝试从缓存查询是否有未使用的订单
+	cacheKey := fmt.Sprintf("no_used_raffle_order_%d_%s", activityID, userID)
+	var order activity.UserRaffleOrder
+
+	err := r.redis.Once(&cache.Item{
+		Ctx:   ctx,
+		Key:   cacheKey,
+		Value: &order,
+		TTL:   5 * time.Second, // 防止短时间内重复查库，或者你可以设长一点，在消费完MQ后清理
+		Do: func(*cache.Item) (interface{}, error) {
+			// 1. 获取分库分表 DB
+			db, tableSuffix := r.routerDB.DBStrategy(userID)
+			if db == nil {
+				return nil, activity.ErrDBRouterError
+			}
+
+			// 2. 查询未被使用的订单
+			var po po.UserRaffleOrder
+			if err := db.WithContext(ctx).Table("user_raffle_order_"+tableSuffix).
+				Where("user_id = ? AND activity_id = ? AND order_state = ?", userID, activityID, activity.UserRaffleOrderStateCreate).
+				First(&po).Error; err != nil {
+				if errors.Is(err, gorm.ErrRecordNotFound) {
+					return nil, nil // 注意这里返回 nil, nil 会导致缓存不被写入，但这符合预期，如果没有记录就不缓存
+				}
+				return nil, err
+			}
+
+			// 3. 转换对象
+			return po.ToEntity(), nil
+		},
+	})
+
+	if err != nil {
+		return nil, err
 	}
 
-	// 2. 查询未被使用的订单
-	var po po.UserRaffleOrder
-	if err := db.WithContext(ctx).Table("user_raffle_order_"+tableSuffix).
-		Where("user_id = ? AND activity_id = ? AND order_state = ?", userID, activityID, activity.UserRaffleOrderStateCreate).
-		First(&po).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, nil
+	// 如果没有找到，order.OrderID 会为空
+	if order.OrderID == "" {
+		return nil, nil
+	}
+
+	return &order, nil
+}
+
+func (r *Repository) CacheGetOrCreateNoUsedRaffleOrder(ctx context.Context, order *activity.UserRaffleOrder) (*activity.UserRaffleOrder, bool, error) {
+	totalKey := GetActivityAccountTotalSurplusKey(order.ActivityID, order.UserID)
+	dayKey := GetActivityAccountDaySurplusKey(order.ActivityID, order.UserID, time.Now().Format("2006-01-02"))
+	monthKey := GetActivityAccountMonthSurplusKey(order.ActivityID, order.UserID, time.Now().Format("2006-01"))
+	pendingOrderKey := GetPendingRaffleOrderKey(order.ActivityID, order.UserID)
+
+	// 在一个脚本里先尝试复用未使用订单，只有不存在时才扣减额度并写入新的待消费订单。
+	script := `
+		local pending = redis.call("HMGET", KEYS[4], "oid", "sid", "st")
+		if pending[1] and pending[2] and pending[3] then
+			if pending[3] == "0" then
+				return {2, pending[1], pending[2], pending[3]}
+			end
+
+			redis.call("DEL", KEYS[4])
+		end
+
+		local total = redis.call("GET", KEYS[1])
+		local day = redis.call("GET", KEYS[2])
+		local month = redis.call("GET", KEYS[3])
+
+		if not total or not day or not month then
+			return {-1}
+		end
+
+		if tonumber(total) <= 0 then return {-2} end
+		if tonumber(day) <= 0 then return {-3} end
+		if tonumber(month) <= 0 then return {-4} end
+
+		redis.call("DECR", KEYS[1])
+		redis.call("DECR", KEYS[2])
+		redis.call("DECR", KEYS[3])
+		redis.call("HSET", KEYS[4],
+			"oid", ARGV[1],
+			"sid", ARGV[2],
+			"st", ARGV[3])
+		redis.call("EXPIRE", KEYS[4], ARGV[4])
+
+		return {1, ARGV[1], ARGV[2], ARGV[3]}
+	`
+
+	result, err := r.redis.Eval(ctx, script, []string{totalKey, dayKey, monthKey, pendingOrderKey},
+		order.OrderID,
+		strconv.FormatInt(order.StrategyID, 10),
+		"0",
+		strconv.FormatInt(int64(pendingRaffleOrderTTL/time.Second), 10),
+	)
+	if err != nil {
+		return nil, false, err
+	}
+
+	resultArray, ok := result.([]interface{})
+	if !ok || len(resultArray) == 0 {
+		return nil, false, fmt.Errorf("unexpected redis eval result: %T", result)
+	}
+
+	status, ok := resultArray[0].(int64)
+	if !ok {
+		return nil, false, fmt.Errorf("unexpected redis eval status type: %T", resultArray[0])
+	}
+
+	switch status {
+	case -1, -2:
+		return nil, false, activity.ErrActivityQuotaError
+	case -3:
+		return nil, false, activity.ErrActivityAccountDayCountSurplusNotEnough
+	case -4:
+		return nil, false, activity.ErrActivityAccountMonthCountSurplusNotEnough
+	case 1, 2:
+		if len(resultArray) < 4 {
+			return nil, false, fmt.Errorf("unexpected redis eval payload length: %d", len(resultArray))
 		}
+
+		strategyID, err := strconv.ParseInt(fmt.Sprint(resultArray[2]), 10, 64)
+		if err != nil {
+			return nil, false, err
+		}
+
+		return &activity.UserRaffleOrder{
+			UserID:       order.UserID,
+			ActivityID:   order.ActivityID,
+			ActivityName: order.ActivityName,
+			StrategyID:   strategyID,
+			OrderID:      fmt.Sprint(resultArray[1]),
+			OrderTime:    order.OrderTime,
+			OrderState:   activity.UserRaffleOrderStateCreate,
+		}, status == 2, nil
+	default:
+		return nil, false, fmt.Errorf("unexpected redis eval status: %d", status)
+	}
+}
+
+func (r *Repository) SaveLiteUserRaffleOrder(ctx context.Context, aggregate *activity.CreatePartakeOrder) error {
+	order := aggregate.UserRaffleOrder
+	db, tableSuffix := r.routerDB.DBStrategy(order.UserID)
+	if db == nil {
+		compensateErr := r.compensatePendingRaffleOrder(ctx, order)
+		if compensateErr != nil {
+			logger.Warn("compensate pending raffle order failed after db router error", "orderID", order.OrderID, "err", compensateErr)
+		}
+		return activity.ErrDBRouterError
 	}
 
-	// 3. 转换对象
-	return po.ToEntity(), nil
+	orderPO := &po.UserRaffleOrder{
+		UserID:           order.UserID,
+		ActivityID:       order.ActivityID,
+		ActivityName:     order.ActivityName,
+		StrategyID:       order.StrategyID,
+		OrderID:          order.OrderID,
+		OrderTime:        order.OrderTime,
+		OrderState:       string(order.OrderState),
+		AccountSyncState: string(activity.AccountSyncStateCreate),
+	}
+
+	baseEvent := rabbitmq.NewBaseEvent(aggregate)
+	taskPO, taskErr := convertToOrderTaskPO(aggregate.UserID, baseEvent.ID, aggregate)
+	if taskErr != nil {
+		compensateErr := r.compensatePendingRaffleOrder(ctx, order)
+		if compensateErr != nil {
+			logger.Warn("compensate pending raffle order failed after task build error", "orderID", order.OrderID, "err", compensateErr)
+		}
+		return taskErr
+	}
+
+	err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if createOrderErr := tx.Table("user_raffle_order_" + tableSuffix).Create(orderPO).Error; createOrderErr != nil {
+			return createOrderErr
+		}
+
+		if createTaskErr := tx.Table("task").Create(taskPO).Error; createTaskErr != nil {
+			return createTaskErr
+		}
+
+		return nil
+	})
+	if err == nil {
+		return nil
+	}
+
+	if errors.Is(err, gorm.ErrDuplicatedKey) || strings.Contains(err.Error(), "Duplicate entry") {
+		return nil
+	}
+
+	compensateErr := r.compensatePendingRaffleOrder(ctx, order)
+	if compensateErr != nil {
+		logger.Warn("compensate pending raffle order failed", "orderID", order.OrderID, "err", compensateErr)
+	}
+
+	return err
 }
 
 func (r *Repository) QueryActivityAccountDay(ctx context.Context, userID string, activityID int64, day string) (*activity.ActivityAccountDay, error) {
@@ -117,11 +306,17 @@ func (r *Repository) QueryActivityAccountMonth(ctx context.Context, userID strin
 	return po.ToEntity(), nil
 }
 
+func (r *Repository) AsyncSaveCreatePartakeOrderAggregate(ctx context.Context, createPartakeOrderAggregate *activity.CreatePartakeOrder) error {
+	// 发送 MQ 消息进行异步落库
+	baseEvent := rabbitmq.NewBaseEvent(createPartakeOrderAggregate)
+	return r.stockZeroPublisher.PublishSaveOrder(ctx, baseEvent)
+}
+
 func (r *Repository) SaveCreatePartakeOrderAggregate(ctx context.Context, createPartakeOrderAggregate *activity.CreatePartakeOrder) error {
 	// 1. 获取 DB 和 分表后缀
 	userID := createPartakeOrderAggregate.UserID
 	activityID := createPartakeOrderAggregate.ActivityID
-	db, tableSuffix := r.routerDB.DBStrategy(userID)
+	db, _ := r.routerDB.DBStrategy(userID)
 	if db == nil {
 		return activity.ErrDBRouterError
 	}
@@ -229,24 +424,6 @@ func (r *Repository) SaveCreatePartakeOrderAggregate(ctx context.Context, create
 			}
 		}
 
-		// 2.4 写入参与活动订单
-		orderEntity := createPartakeOrderAggregate.UserRaffleOrder
-		orderPO := po.UserRaffleOrder{
-			UserID:       orderEntity.UserID,
-			ActivityID:   orderEntity.ActivityID,
-			ActivityName: orderEntity.ActivityName,
-			StrategyID:   orderEntity.StrategyID,
-			OrderID:      orderEntity.OrderID,
-			OrderTime:    orderEntity.OrderTime,
-			OrderState:   string(orderEntity.OrderState),
-		}
-		if err := tx.Table("user_raffle_order_" + tableSuffix).Create(&orderPO).Error; err != nil {
-			if errors.Is(err, gorm.ErrDuplicatedKey) {
-				return activity.ErrDBIndexDuplicate
-			}
-			return err
-		}
-
 		return nil
 	})
 }
@@ -280,4 +457,48 @@ func (r *Repository) QueryRaffleActivityAccountDayPartakeCount(ctx context.Conte
 		return 0, err
 	}
 	return int64(po.DayCount - po.DayCountSurplus), nil
+}
+
+func (r *Repository) compensatePendingRaffleOrder(ctx context.Context, order *activity.UserRaffleOrder) error {
+	totalKey := GetActivityAccountTotalSurplusKey(order.ActivityID, order.UserID)
+	dayKey := GetActivityAccountDaySurplusKey(order.ActivityID, order.UserID, order.OrderTime.Format("2006-01-02"))
+	monthKey := GetActivityAccountMonthSurplusKey(order.ActivityID, order.UserID, order.OrderTime.Format("2006-01"))
+	pendingOrderKey := GetPendingRaffleOrderKey(order.ActivityID, order.UserID)
+
+	script := `
+		local pending = redis.call("HMGET", KEYS[4], "oid", "st")
+		if not pending[1] or pending[1] ~= ARGV[1] then
+			return 0
+		end
+
+		if pending[2] ~= "0" then
+			return 0
+		end
+
+		redis.call("INCR", KEYS[1])
+		redis.call("INCR", KEYS[2])
+		redis.call("INCR", KEYS[3])
+		redis.call("DEL", KEYS[4])
+		return 1
+	`
+
+	_, err := r.redis.Eval(ctx, script, []string{totalKey, dayKey, monthKey, pendingOrderKey}, order.OrderID)
+	return err
+}
+
+func convertToOrderTaskPO(userID, messageID string, aggregate *activity.CreatePartakeOrder) (*po.Task, error) {
+	messageBytes, err := json.Marshal(aggregate)
+	if err != nil {
+		return nil, err
+	}
+
+	return &po.Task{
+		UserID:     userID,
+		Topic:      "save_order_record",
+		MessageID:  messageID,
+		Message:    string(messageBytes),
+		State:      "create",
+		CreateTime: time.Now(),
+		UpdateTime: time.Now(),
+	}, nil
 }

@@ -14,6 +14,7 @@ import (
 	"big-market-kratos/internal/biz/task"
 	"big-market-kratos/internal/conf"
 	"big-market-kratos/internal/data"
+	"big-market-kratos/internal/dcc"
 	"big-market-kratos/internal/job"
 	"big-market-kratos/internal/listener"
 	"big-market-kratos/internal/server"
@@ -24,12 +25,13 @@ import (
 
 import (
 	_ "go.uber.org/automaxprocs"
+	_ "net/http/pprof"
 )
 
 // Injectors from wire.go:
 
 // wireApp init kratos application.
-func wireApp(confServer *conf.Server, confData *conf.Data, rabbitMQ *conf.RabbitMQ, asynq *conf.Asynq, logger log.Logger) (*kratos.App, func(), error) {
+func wireApp(confServer *conf.Server, confData *conf.Data, rabbitMQ *conf.RabbitMQ, asynq *conf.Asynq, logger log.Logger, configGetter dcc.ConfigGetter) (*kratos.App, func(), error) {
 	data_Mysql := data.NewMysqlConfig(confData)
 	db := data.NewDB(data_Mysql)
 	data_Redis := data.NewRedisConfig(confData)
@@ -53,22 +55,23 @@ func wireApp(confServer *conf.Server, confData *conf.Data, rabbitMQ *conf.Rabbit
 	strategyService := service.NewStrategyService(strategyUsecase, activityQuotaUsecase)
 	stockManager := activity.NewStockManager(activityRepo)
 	activityPartakeUsecase := activity.NewActivityPartakeUsecase(activityRepo)
-	awardRepo := data.NewUserAwardRecordRepository(dbRouter, publisher)
+	awardRepo := data.NewUserAwardRecordRepository(dbRouter, cache, publisher)
 	awardUsecase := award.NewAwardUsecase(awardRepo)
 	rebateRepo := data.NewRebateRepository(db, dbRouter, publisher)
 	behaviorRebateUsecase := rebate.NewBehaviorRebateUsecase(rebateRepo)
 	activityService := service.NewActivityService(stockManager, activityPartakeUsecase, activityQuotaUsecase, strategyUsecase, awardUsecase, behaviorRebateUsecase)
 	grpcServer := server.NewGRPCServer(confServer, strategyService, activityService, logger)
-	httpServer := server.NewHTTPServer(confServer, strategyService, activityService, logger)
+	httpServer := server.NewHTTPServer(confServer, strategyService, activityService, logger, configGetter)
 	activitySkuStockConsumeJob := job.NewActivitySkuStockConsumeJob(activityQuotaUsecase)
-	taskRepo := data.NewTaskRepository(dbRouter)
+	taskRepo := data.NewTaskRepository(dbRouter, publisher)
 	taskUsecase := task.NewTaskUsecase(taskRepo)
 	sendAwardMessage := job.NewSendAwardMessage(taskUsecase, data_Mysql)
 	strategyAwardStockConsumeJob := job.NewStrategyAwardStockConsumeJob(strategyUsecase)
 	asynqServer := server.NewAsynqServer(asynq, activitySkuStockConsumeJob, sendAwardMessage, strategyAwardStockConsumeJob)
 	activityStockListener := listener.NewActivityStockListener(activityQuotaUsecase)
 	rebateListener := listener.NewRebateListener(activityQuotaUsecase)
-	rabbitMQServer := server.NewRabbitMQServer(connection, activityStockListener, rebateListener)
+	saveOrderListener := listener.NewSaveOrderListener(activityPartakeUsecase)
+	rabbitMQServer := server.NewRabbitMQServer(connection, activityStockListener, rebateListener, saveOrderListener)
 	app := newApp(logger, grpcServer, httpServer, asynqServer, rabbitMQServer)
 	return app, func() {
 	}, nil

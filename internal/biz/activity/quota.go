@@ -1,9 +1,9 @@
 package activity
 
 import (
+	"big-market-kratos/pkg/logger"
 	"context"
 	"fmt"
-	"log/slog"
 	"math/rand"
 	"time"
 )
@@ -39,7 +39,7 @@ func (s *ActivityQuotaUsecase) CreateRaffleActivityOrder(ctx context.Context, sk
 		return "", err
 	}
 
-	slog.Info("CreateRaffleActivityOrder", "activity", activity, "activityCount", activityCount)
+	logger.Info("CreateRaffleActivityOrder", "activity", activity, "activityCount", activityCount)
 
 	quotaOrder := s.buildOrderAggregate(skuRecharge, activitySku, activity, activityCount)
 
@@ -102,4 +102,8 @@ func (s *ActivityQuotaUsecase) QueryRaffleActivityAccountPartakeCount(ctx contex
 
 func (s *ActivityQuotaUsecase) QueryRaffleActivityAccountDayPartakeCount(ctx context.Context, userID string, activityID int64) (int64, error) {
 	return s.repo.QueryRaffleActivityAccountDayPartakeCount(ctx, userID, activityID)
+}
+
+func (s *ActivityQuotaUsecase) AssembleActivityAccountByActivityId(ctx context.Context, activityID int64) error {
+	return s.repo.AssembleActivityAccountByActivityId(ctx, activityID)
 }

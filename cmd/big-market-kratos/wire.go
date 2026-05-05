@@ -12,6 +12,7 @@ import (
 	"big-market-kratos/internal/server"
 	"big-market-kratos/internal/service"
 
+	"big-market-kratos/internal/dcc"
 	"big-market-kratos/internal/job"
 	"big-market-kratos/internal/listener"
 
@@ -21,6 +22,6 @@ import (
 )
 
 // wireApp init kratos application.
-func wireApp(*conf.Server, *conf.Data, *conf.RabbitMQ, *conf.Asynq, log.Logger) (*kratos.App, func(), error) {
+func wireApp(*conf.Server, *conf.Data, *conf.RabbitMQ, *conf.Asynq, log.Logger, dcc.ConfigGetter) (*kratos.App, func(), error) {
 	panic(wire.Build(server.ProviderSet, data.ProviderSet, biz.ProviderSet, service.ProviderSet, job.ProviderSet, listener.ProviderSet, newApp))
 }

@@ -3,11 +3,11 @@ package listener
 import (
 	"big-market-kratos/internal/biz/activity"
 	"big-market-kratos/internal/biz/rebate"
+	"big-market-kratos/pkg/logger"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log/slog"
 	"strconv"
 	"time"
 )
@@ -31,12 +31,12 @@ func (l *RebateListener) Handle(ctx context.Context, body []byte) (retry bool, e
 		Data      rebate.RebateMessage
 	}
 	if err := json.Unmarshal(body, &event); err != nil {
-		slog.Error("Unmarshal rebate message failed", "err", err, "body", string(body))
+		logger.Error("Unmarshal rebate message failed", "err", err, "body", string(body))
 		return false, fmt.Errorf("unmarshal failed: %w", err)
 	}
 
 	rebateMsg := event.Data
-	slog.Info("Received rebate message", "userId", rebateMsg.UserID, "rebateType", rebateMsg.RebateType, "config", rebateMsg.RebateConfig)
+	logger.Info("Received rebate message", "userId", rebateMsg.UserID, "rebateType", rebateMsg.RebateType, "config", rebateMsg.RebateConfig)
 
 	// 2. Process based on RebateType
 	switch rebateMsg.RebateType {
@@ -44,7 +44,7 @@ func (l *RebateListener) Handle(ctx context.Context, body []byte) (retry bool, e
 		// Parse SKU from config
 		sku, err := strconv.ParseInt(rebateMsg.RebateConfig, 10, 64)
 		if err != nil {
-			slog.Error("Invalid sku config", "config", rebateMsg.RebateConfig, "err", err)
+			logger.Error("Invalid sku config", "config", rebateMsg.RebateConfig, "err", err)
 			return false, nil // Invalid config, no retry
 		}
 
@@ -60,22 +60,22 @@ func (l *RebateListener) Handle(ctx context.Context, body []byte) (retry bool, e
 		if err != nil {
 			// Check for duplicate key error (idempotency)
 			if errors.Is(err, activity.ErrDBIndexDuplicate) {
-				slog.Warn("Duplicate rebate order, considered success", "userId", rebateMsg.UserID, "bizId", rebateMsg.BizID)
+				logger.Warn("Duplicate rebate order, considered success", "userId", rebateMsg.UserID, "bizId", rebateMsg.BizID)
 				return false, nil
 			}
 
-			slog.Error("CreateRaffleActivityOrder failed", "userId", rebateMsg.UserID, "sku", sku, "err", err)
+			logger.Error("CreateRaffleActivityOrder failed", "userId", rebateMsg.UserID, "sku", sku, "err", err)
 			return true, err
 		}
-		slog.Info("Rebate award distributed successfully", "userId", rebateMsg.UserID, "orderId", orderID)
+		logger.Info("Rebate award distributed successfully", "userId", rebateMsg.UserID, "orderId", orderID)
 
 	case string(rebate.Integral):
 		// TODO: Handle integral rebate
-		slog.Info("Integral rebate not implemented yet", "userId", rebateMsg.UserID)
+		logger.Info("Integral rebate not implemented yet", "userId", rebateMsg.UserID)
 		return false, nil
 
 	default:
-		slog.Warn("Unknown rebate type", "type", rebateMsg.RebateType)
+		logger.Warn("Unknown rebate type", "type", rebateMsg.RebateType)
 		return false, nil
 	}
 

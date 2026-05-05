@@ -9,5 +9,5 @@ type Repo interface {
 	QueryNoSendMessageTaskList(ctx context.Context, dbIndx int) ([]*Task, error)
 	UpdateTaskSendMessageCompleted(ctx context.Context, userID, messageID string) error
 	UpdateTaskSendMessageFail(ctx context.Context, userID, messageID string) error
-	SendAwardMessage(ctx context.Context, event *rabbitmq.BaseEvent) error
+	SendMessage(ctx context.Context, topic string, event *rabbitmq.BaseEvent) error
 }

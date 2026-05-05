@@ -2,10 +2,10 @@ package job
 
 import (
 	"big-market-kratos/internal/biz/strategy"
+	"big-market-kratos/pkg/logger"
 	"context"
 	"encoding/json"
 	"fmt"
-	"log/slog"
 
 	"github.com/hibiken/asynq"
 )
@@ -28,10 +28,10 @@ func (j *StrategyAwardStockConsumeJob) ProcessTask(ctx context.Context, task *as
 	}
 
 	if err := j.service.UpdateStrategyAwardStock(ctx, msg.StrategyID, msg.AwardID); err != nil {
-		slog.Error("UpdateStrategyAwardStock failed", "strategyID", msg.StrategyID, "awardID", msg.AwardID, "err", err)
+		logger.Error("UpdateStrategyAwardStock failed", "strategyID", msg.StrategyID, "awardID", msg.AwardID, "err", err)
 		return err
 	}
 
-	slog.Info("UpdateStrategyAwardStock success", "strategyID", msg.StrategyID, "awardID", msg.AwardID)
+	logger.Info("UpdateStrategyAwardStock success", "strategyID", msg.StrategyID, "awardID", msg.AwardID)
 	return nil
 }

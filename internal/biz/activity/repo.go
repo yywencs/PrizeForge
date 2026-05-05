@@ -16,8 +16,8 @@ type Repo interface {
 	SaveOrder(ctx context.Context, activityOrder *CreateQuotaOrder) error
 	// CacheActivitySkuStockCount 缓存活动商品库存信息
 	CacheActivitySkuStockCount(ctx context.Context, cacheKey string, stockCount int) error
-	// SubtractionActivitySkuStock 活动商品库存减一
-	SubtractionActivitySkuStock(ctx context.Context, skuID int64, endTime time.Time) (bool, error)
+	// SubtractionActivitySkuStock 活动商品库存减一，返回抽奖结果
+	SubtractionActivitySkuStock(ctx context.Context, skuID int64, activityID int64, userID string, endTime time.Time) (*ActivityResult, error)
 	// ActivitySkuStockConsumeSendQueue 活动商品库存消耗队列
 	ActivitySkuStockConsumeSendQueue(ctx context.Context, key *ActivitySkuStockKey) error
 	// ClearActivitySkuStock 清除活动商品库存缓存
@@ -28,14 +28,20 @@ type Repo interface {
 	QueryRaffleActivity(ctx context.Context, activityID int64) (*Activity, error)
 	// 查询用户未使用的抽奖订单
 	QueryNoUsedRaffleOrder(ctx context.Context, userID string, activityID int64) (*UserRaffleOrder, error)
+	// CacheGetOrCreateNoUsedRaffleOrder 先从缓存复用未使用订单，缺失时原子扣减额度并创建新订单
+	CacheGetOrCreateNoUsedRaffleOrder(ctx context.Context, order *UserRaffleOrder) (*UserRaffleOrder, bool, error)
+	// SaveLiteUserRaffleOrder 同步落一条最小化抽奖订单，并写入异步补额度账 task
+	SaveLiteUserRaffleOrder(ctx context.Context, aggregate *CreatePartakeOrder) error
 	// 查询用户活动账户信息
 	QueryActivityAccount(ctx context.Context, userID string, activityID int64) (*ActivityAccount, error)
 	// 查询用户活动账户日信息
 	QueryActivityAccountDay(ctx context.Context, userID string, activityID int64, day string) (*ActivityAccountDay, error)
 	// 查询用户活动账户月信息
 	QueryActivityAccountMonth(ctx context.Context, userID string, activityID int64, month string) (*ActivityAccountMonth, error)
-	// 保存创建参与订单聚合根
+	// SaveCreatePartakeOrderAggregate 保存创建参与活动订单聚合
 	SaveCreatePartakeOrderAggregate(ctx context.Context, createPartakeOrderAggregate *CreatePartakeOrder) error
+	// AsyncSaveCreatePartakeOrderAggregate 异步保存创建参与活动订单聚合
+	AsyncSaveCreatePartakeOrderAggregate(ctx context.Context, createPartakeOrderAggregate *CreatePartakeOrder) error
 	// UpdateActivitySkuStock 更新活动商品库存
 	UpdateActivitySkuStock(ctx context.Context, sku int64) error
 	// 根据活动ID查询Sku
@@ -46,4 +52,6 @@ type Repo interface {
 	QueryRaffleActivityAccountPartakeCount(ctx context.Context, userID string, activityID int64) (int64, error)
 	// QueryRaffleActivityAccountDayPartakeCount 查询用户活动账户日参与次数
 	QueryRaffleActivityAccountDayPartakeCount(ctx context.Context, userID string, activityID int64) (int64, error)
+	// AssembleActivityAccountByActivityId 组装活动对应的所有用户额度到缓存
+	AssembleActivityAccountByActivityId(ctx context.Context, activityID int64) error
 }

@@ -1,16 +1,17 @@
 package data
 
 import (
+	"big-market-kratos/internal/biz/activity"
 	"big-market-kratos/internal/biz/strategy"
 	"big-market-kratos/internal/biz/task"
 	"big-market-kratos/internal/data/po"
 	"big-market-kratos/pkg/cache"
 	"big-market-kratos/pkg/common"
+	"big-market-kratos/pkg/logger"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log/slog"
 	"strconv"
 	"strings"
 	"time"
@@ -42,14 +43,35 @@ func NewStrategyRepository(db *gorm.DB, redis *cache.Cache, queue *asynq.Client,
 }
 
 func (sr *strategyRepository) QueryStrategyIdByActivityId(ctx context.Context, activityID int64) (int64, error) {
-	var raffleActivity po.RaffleActivity
-	err := sr.db.WithContext(ctx).
-		Where("activity_id = ?", activityID).
-		First(&raffleActivity).Error
+	cacheKey := fmt.Sprintf("strategy_id_by_activity_%d", activityID)
+	var strategyID int64
+
+	err := sr.redis.Once(&cache.Item{
+		Ctx:   ctx,
+		Key:   cacheKey,
+		Value: &strategyID,
+		TTL:   10 * 24 * time.Hour,
+		Do: func(*cache.Item) (interface{}, error) {
+			var activityPO po.RaffleActivity
+			err := sr.db.WithContext(ctx).
+				Where("activity_id = ?", activityID).
+				First(&activityPO).Error
+
+			if err != nil {
+				if errors.Is(err, gorm.ErrRecordNotFound) {
+					return nil, nil
+				}
+				return nil, err
+			}
+			return activityPO.StrategyID, nil
+		},
+	})
+
 	if err != nil {
 		return 0, err
 	}
-	return raffleActivity.StrategyID, nil
+
+	return strategyID, nil
 }
 
 // 通过StrategyId查询StrategyEntity
@@ -62,12 +84,12 @@ func (sr *strategyRepository) QueryStrategyEntityByStrategyId(ctx context.Contex
 		Ctx:   ctx,
 		Key:   cacheKey,
 		Value: &strategyEntity,
-		TTL:   10 * time.Minute,
+		TTL:   10 * 24 * time.Hour,
 
 		Do: func(*cache.Item) (interface{}, error) {
 			var dbResult po.Strategy
 			// 查库
-			err := sr.db.WithContext(ctx).
+			err := sr.db.WithContext(context.Background()).
 				Where("strategy_id = ?", strategyID).
 				First(&dbResult).Error
 
@@ -99,7 +121,7 @@ func (sr *strategyRepository) QueryStrategyAwardList(ctx context.Context, strate
 		Ctx:   ctx,
 		Key:   cacheKey,
 		Value: &strategyAwards, // 结果会填入这里
-		TTL:   10 * time.Minute,
+		TTL:   10 * 24 * time.Hour,
 
 		// 只有缓存未命中，才会执行这个 Do 函数
 		Do: func(*cache.Item) (interface{}, error) {
@@ -149,18 +171,34 @@ func (sr *strategyRepository) QueryStrategyRule(ctx context.Context, strategyID 
 // QueryStrategyValue 根据 strategyID、awardID 和 ruleModel 查询策略规则值（通常是抽奖中规则）
 func (sr *strategyRepository) QueryStrategyValue(ctx context.Context, strategyID int64, ruleModel strategy.RuleChainName) (string, error) {
 	var ruleValue string
+	cacheKey := GetStrategyRuleValueKey(strategyID, string(ruleModel))
 
-	err := sr.db.WithContext(ctx).
-		Where("strategy_id = ? AND rule_model = ?", strategyID, ruleModel).
-		Table("strategy_rule").
-		Select("rule_value").
-		Scan(&ruleValue).
-		Error
+	err := sr.redis.Once(&cache.Item{
+		Ctx:   ctx,
+		Key:   cacheKey,
+		Value: &ruleValue,
+		TTL:   10 * 24 * time.Hour,
+
+		Do: func(*cache.Item) (interface{}, error) {
+			var rv string
+			err := sr.db.WithContext(ctx).
+				Where("strategy_id = ? AND rule_model = ?", strategyID, ruleModel).
+				Table("strategy_rule").
+				Select("rule_value").
+				Scan(&rv).
+				Error
+
+			if err != nil {
+				if errors.Is(err, gorm.ErrRecordNotFound) {
+					return "", nil
+				}
+				return "", err
+			}
+			return rv, nil
+		},
+	})
 
 	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return "", nil
-		}
 		return "", err
 	}
 	return ruleValue, nil
@@ -169,18 +207,34 @@ func (sr *strategyRepository) QueryStrategyValue(ctx context.Context, strategyID
 // QueryStrategyRuleValue 根据 strategyID 和 ruleModel 查询策略规则值（通常是抽奖前规则）
 func (sr *strategyRepository) QueryStrategyRuleValue(ctx context.Context, strategyID int64, ruleModel strategy.RuleChainName) (string, error) {
 	var ruleValue string
+	cacheKey := GetStrategyRuleValueKey(strategyID, string(ruleModel))
 
-	err := sr.db.WithContext(ctx).
-		Where("strategy_id = ? AND rule_model = ?", strategyID, ruleModel).
-		Table("strategy_rule").
-		Select("rule_value").
-		Scan(&ruleValue).
-		Error
+	err := sr.redis.Once(&cache.Item{
+		Ctx:   ctx,
+		Key:   cacheKey,
+		Value: &ruleValue,
+		TTL:   10 * 24 * time.Hour,
+
+		Do: func(*cache.Item) (interface{}, error) {
+			var rv string
+			err := sr.db.WithContext(ctx).
+				Where("strategy_id = ? AND rule_model = ?", strategyID, ruleModel).
+				Table("strategy_rule").
+				Select("rule_value").
+				Scan(&rv).
+				Error
+
+			if err != nil {
+				if errors.Is(err, gorm.ErrRecordNotFound) {
+					return "", nil
+				}
+				return "", err
+			}
+			return rv, nil
+		},
+	})
 
 	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return "", nil
-		}
 		return "", err
 	}
 	return ruleValue, nil
@@ -195,7 +249,7 @@ func (sr *strategyRepository) QueryStrategyRuleModel(ctx context.Context, strate
 		Ctx:   ctx,
 		Key:   cacheKey,
 		Value: &ruleModel,
-		TTL:   5 * time.Minute,
+		TTL:   10 * 24 * time.Hour,
 
 		Do: func(*cache.Item) (interface{}, error) {
 			var dbResult po.StrategyAward
@@ -232,13 +286,16 @@ func (d *strategyRepository) QueryRuleTree(ctx context.Context, ruleModel strate
 		Ctx:   ctx,
 		Key:   cacheKey,
 		Value: &ruleTree,
-		TTL:   10 * time.Minute,
+		TTL:   10 * 24 * time.Hour,
 
 		Do: func(*cache.Item) (interface{}, error) {
 			var treePO po.RuleTree
 			if err := d.db.WithContext(ctx).
 				Where("tree_id = ?", string(ruleModel)).
 				First(&treePO).Error; err != nil {
+				if errors.Is(err, gorm.ErrRecordNotFound) {
+					return nil, nil
+				}
 				return nil, err
 			}
 
@@ -265,11 +322,16 @@ func (d *strategyRepository) QueryRuleTree(ctx context.Context, ruleModel strate
 			nodeMap := make(map[strategy.RuleTreeName]*strategy.RuleTreeNode, len(nodePOs))
 			for _, po := range nodePOs {
 				node := po.ToEntity()
+				// 将连线挂载到节点上
+				if lines, ok := nodeLineMap[string(node.RuleKey)]; ok {
+					node.TreeNodeLine = lines
+				}
 				nodeMap[node.RuleKey] = node
 			}
 
 			ruleTreeEntity := treePO.ToEntity()
 			ruleTreeEntity.NodeMap = nodeMap
+			// 由于 Redis 缓存直接序列化指针对象比较方便，我们返回实体对象的指针
 			return ruleTreeEntity, nil
 		},
 	})
@@ -313,13 +375,15 @@ func NewAwardStockConsumeHandler(ctx context.Context, repo *strategyRepository) 
 func (d *strategyRepository) QueryStrategyAward(ctx context.Context, strategyID int64, awardID int64) (*strategy.StrategyAward, error) {
 	var strategyAward strategy.StrategyAward
 
-	cacheKey := GetStrategyAwardKey(strategyID) + ":" + string(rune(awardID))
+	// Fix the cache key: string(rune(awardID)) can lead to invalid or unprintable characters for large numbers.
+	// Use fmt.Sprintf or strconv.FormatInt to properly format the integer as a string.
+	cacheKey := fmt.Sprintf("%s:%d", GetStrategyAwardKey(strategyID), awardID)
 
 	err := d.redis.Once(&cache.Item{
 		Ctx:   ctx,
 		Key:   cacheKey,
 		Value: &strategyAward,
-		TTL:   10 * time.Minute,
+		TTL:   10 * 24 * time.Hour,
 
 		Do: func(*cache.Item) (interface{}, error) {
 			var dbResult po.StrategyAward
@@ -354,7 +418,7 @@ func (d *strategyRepository) QueryAwardRuleWeight(ctx context.Context, strategyI
 		Ctx:   ctx,
 		Key:   cacheKey,
 		Value: &ruleWeightVOList,
-		TTL:   10 * time.Minute,
+		TTL:   10 * 24 * time.Hour,
 		Do: func(*cache.Item) (interface{}, error) {
 			var rulePO po.StrategyRule
 			err := d.db.WithContext(ctx).
@@ -470,11 +534,79 @@ func (d *strategyRepository) QueryAwardRuleWeight(ctx context.Context, strategyI
 }
 
 func (d *strategyRepository) QueryActivityAccountTotalUseCount(ctx context.Context, userID string, strategyID int64) (int64, error) {
-	// 1. 根据 strategyID 查询 activityID
+	// 1. 根据 strategyID 查询 activityID (先走缓存)
 	var activityPO po.RaffleActivity
-	err := d.db.WithContext(ctx).
-		Where("strategy_id = ?", strategyID).
-		First(&activityPO).Error
+	activityKey := fmt.Sprintf("activity_by_strategy_%d", strategyID)
+
+	err := d.redis.Once(&cache.Item{
+		Ctx:   ctx,
+		Key:   activityKey,
+		Value: &activityPO,
+		TTL:   10 * 24 * time.Hour,
+		Do: func(*cache.Item) (interface{}, error) {
+			var act po.RaffleActivity
+			err := d.db.WithContext(ctx).
+				Where("strategy_id = ?", strategyID).
+				First(&act).Error
+			if err != nil {
+				if errors.Is(err, gorm.ErrRecordNotFound) {
+					return nil, nil // 注意: 返回 nil, nil 不会被缓存
+				}
+				return nil, err
+			}
+			return &act, nil
+		},
+	})
+
+	if err != nil {
+		return 0, err
+	}
+	if activityPO.ActivityID == 0 {
+		return 0, nil
+	}
+
+	// 2. 查询 raffle_activity_account 表 (走缓存)
+	// 这个表我们之前在 partake.go 里其实查过，可以直接复用那个缓存 key
+	// 或者直接在缓存里存一个 total_count 和 surplus
+
+	accountKey := GetActivityAccountKey(activityPO.ActivityID, userID)
+	var account activity.ActivityAccount // 使用与装配时相同的结构体
+
+	err = d.redis.Once(&cache.Item{
+		Ctx:   ctx,
+		Key:   accountKey,
+		Value: &account,
+		TTL:   10 * 24 * time.Hour,
+		Do: func(*cache.Item) (interface{}, error) {
+			db, _ := d.routerDB.DBStrategy(userID)
+			if db == nil {
+				return nil, errors.New("db router failed")
+			}
+			var acc po.RaffleActivityAccount
+			err = db.WithContext(ctx).Table("raffle_activity_account").
+				Where("user_id = ? AND activity_id = ?", userID, activityPO.ActivityID).
+				First(&acc).Error
+
+			if err != nil {
+				if errors.Is(err, gorm.ErrRecordNotFound) {
+					return nil, nil
+				}
+				return nil, err
+			}
+			// 返回与装配时一致的 activity.ActivityAccount 结构
+			return &activity.ActivityAccount{
+				UserID:            acc.UserID,
+				ActivityID:        acc.ActivityID,
+				TotalCount:        acc.TotalCount,
+				TotalCountSurplus: acc.TotalCountSurplus,
+				DayCount:          acc.DayCount,
+				DayCountSurplus:   acc.DayCountSurplus,
+				MonthCount:        acc.MonthCount,
+				MonthCountSurplus: acc.MonthCountSurplus,
+			}, nil
+		},
+	})
+
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return 0, nil
@@ -482,27 +614,8 @@ func (d *strategyRepository) QueryActivityAccountTotalUseCount(ctx context.Conte
 		return 0, err
 	}
 
-	// 2. 查询 raffle_activity_account 表
-	var accountPO struct {
-		TotalCount        int
-		TotalCountSurplus int
-	}
-
-	db, _ := d.routerDB.DBStrategy(userID)
-	if db == nil {
-		return 0, errors.New("db router failed")
-	}
-	err = db.WithContext(ctx).Table("raffle_activity_account").
-		Select("total_count, total_count_surplus").
-		Where("user_id = ? AND activity_id = ?", userID, activityPO.ActivityID).
-		Scan(&accountPO).Error
-
-	if err != nil {
-		return 0, err
-	}
-
 	// 3. 计算已使用次数
-	return int64(accountPO.TotalCount - accountPO.TotalCountSurplus), nil
+	return int64(account.TotalCount - account.TotalCountSurplus), nil
 }
 
 func (d *strategyRepository) StoreStrategyAwardPool(ctx context.Context, strategyID string, rateRange int, idxToAwardIDMap map[int]int64) error {
@@ -510,7 +623,7 @@ func (d *strategyRepository) StoreStrategyAwardPool(ctx context.Context, strateg
 		Ctx:   ctx,
 		Key:   GetStrategyRateRangeKey(strategyID),
 		Value: rateRange,
-		TTL:   10 * time.Minute,
+		TTL:   10 * 24 * time.Hour,
 	})
 
 	if err != nil {
@@ -521,7 +634,7 @@ func (d *strategyRepository) StoreStrategyAwardPool(ctx context.Context, strateg
 	for k, v := range idxToAwardIDMap {
 		values[strconv.Itoa(k)] = v
 	}
-	err = d.redis.HSetWithTTL(ctx, GetStrategyRateTableKey(strategyID), values, 10*time.Minute)
+	err = d.redis.HSetWithTTL(ctx, GetStrategyRateTableKey(strategyID), values, 10*24*time.Hour)
 
 	return err
 }
@@ -564,7 +677,7 @@ func (d *strategyRepository) SubtractionAwardStock(ctx context.Context, strategy
 	}
 
 	if !ok {
-		slog.Info("策略奖品库存加锁失败", "lockKey", lockKey)
+		logger.Info("策略奖品库存加锁失败", "lockKey", lockKey)
 	}
 
 	return ok, nil

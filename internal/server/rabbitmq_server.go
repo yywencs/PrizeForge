@@ -3,11 +3,20 @@ package server
 import (
 	"big-market-kratos/internal/biz/activity"
 	bizlistener "big-market-kratos/internal/listener"
+	"big-market-kratos/pkg/logger"
 	"context"
-	"fmt"
-	"log/slog"
 
+	"github.com/go-kratos/kratos/v2/errors"
 	amqp "github.com/rabbitmq/amqp091-go"
+)
+
+var (
+	ErrRabbitMQChannelOpen      = errors.InternalServer("RABBITMQ_CHANNEL_OPEN", "failed to open channel")
+	ErrRabbitMQExchangeDeclare  = errors.InternalServer("RABBITMQ_EXCHANGE_DECLARE", "failed to declare exchange")
+	ErrRabbitMQQueueDeclare     = errors.InternalServer("RABBITMQ_QUEUE_DECLARE", "failed to declare queue")
+	ErrRabbitMQQueueBind        = errors.InternalServer("RABBITMQ_QUEUE_BIND", "failed to bind queue")
+	ErrRabbitMQQosSet           = errors.InternalServer("RABBITMQ_QOS_SET", "failed to set QoS")
+	ErrRabbitMQConsumerRegister = errors.InternalServer("RABBITMQ_CONSUMER_REGISTER", "failed to register consumer")
 )
 
 type Listener interface {
@@ -24,6 +33,7 @@ func NewRabbitMQServer(
 	conn *amqp.Connection,
 	stockListener *bizlistener.ActivityStockListener,
 	rebateListener *bizlistener.RebateListener,
+	saveOrderListener *bizlistener.SaveOrderListener,
 ) *RabbitMQServer {
 	s := &RabbitMQServer{
 		conn:      conn,
@@ -32,6 +42,7 @@ func NewRabbitMQServer(
 
 	s.RegisterListener(activity.ActivitySkuStockZeroTopic, stockListener)
 	s.RegisterListener(activity.ActivityAwardSendTopic, rebateListener)
+	s.RegisterListener("save_order_record", saveOrderListener)
 
 	return s
 }
@@ -52,7 +63,7 @@ func (s *RabbitMQServer) Start(ctx context.Context) error {
 func (s *RabbitMQServer) startConsumer(topic string, l Listener) error {
 	channel, err := s.conn.Channel()
 	if err != nil {
-		return fmt.Errorf("failed to open channel: %w", err)
+		return ErrRabbitMQChannelOpen.WithCause(err)
 	}
 
 	err = channel.ExchangeDeclare(
@@ -65,7 +76,7 @@ func (s *RabbitMQServer) startConsumer(topic string, l Listener) error {
 		nil,      // arguments
 	)
 	if err != nil {
-		return fmt.Errorf("failed to declare exchange: %w", err)
+		return ErrRabbitMQExchangeDeclare.WithCause(err)
 	}
 
 	q, err := channel.QueueDeclare(
@@ -77,7 +88,7 @@ func (s *RabbitMQServer) startConsumer(topic string, l Listener) error {
 		nil,            // arguments
 	)
 	if err != nil {
-		return fmt.Errorf("failed to declare queue: %w", err)
+		return ErrRabbitMQQueueDeclare.WithCause(err)
 	}
 
 	err = channel.QueueBind(
@@ -88,7 +99,7 @@ func (s *RabbitMQServer) startConsumer(topic string, l Listener) error {
 		nil,
 	)
 	if err != nil {
-		return fmt.Errorf("failed to bind queue: %w", err)
+		return ErrRabbitMQQueueBind.WithCause(err)
 	}
 
 	// 设置 QoS
@@ -98,7 +109,7 @@ func (s *RabbitMQServer) startConsumer(topic string, l Listener) error {
 		false, // global
 	)
 	if err != nil {
-		return fmt.Errorf("failed to set QoS: %w", err)
+		return ErrRabbitMQQosSet.WithCause(err)
 	}
 
 	msgs, err := channel.Consume(
@@ -111,21 +122,21 @@ func (s *RabbitMQServer) startConsumer(topic string, l Listener) error {
 		nil,    // args
 	)
 	if err != nil {
-		return fmt.Errorf("failed to register consumer: %w", err)
+		return ErrRabbitMQConsumerRegister.WithCause(err)
 	}
 
 	go s.handle(msgs, l)
 
 	s.channels = append(s.channels, channel)
 
-	slog.Info("RabbitMQ Consumer started listening", "queue", q.Name)
+	logger.Info("RabbitMQ Consumer started listening", "queue", q.Name)
 	return nil
 }
 
 func (s *RabbitMQServer) Stop(ctx context.Context) error {
 	for _, ch := range s.channels {
 		if err := ch.Close(); err != nil {
-			slog.Error("failed to close rabbitmq channel", "err", err)
+			logger.Error("failed to close rabbitmq channel", "err", err)
 		}
 	}
 	if s.conn != nil {
@@ -139,18 +150,18 @@ func (s *RabbitMQServer) handle(msgs <-chan amqp.Delivery, l Listener) {
 		func() {
 			defer func() {
 				if r := recover(); r != nil {
-					slog.Error("Panic in worker", "reason", r)
+					logger.Error("Panic in worker", "reason", r)
 					d.Nack(false, true) // 发生严重错误重回队列
 				}
 			}()
 
 			if retry, err := l.Handle(context.Background(), d.Body); err != nil {
-				slog.Error("Handle message failed", "err", err)
+				logger.Error("Handle message failed", "err", err)
 				if retry {
-					slog.Warn("Retrying message", "err", err)
+					logger.Warn("Retrying message", "err", err)
 					d.Nack(false, true) // 或者根据错误类型决定是否重试
 				} else {
-					slog.Error("Fatal error, dropping message", "err", err)
+					logger.Error("Fatal error, dropping message", "err", err)
 					d.Reject(false)
 				}
 				return

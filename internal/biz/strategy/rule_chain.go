@@ -2,9 +2,8 @@ package strategy
 
 import (
 	"big-market-kratos/pkg/common"
+	"big-market-kratos/pkg/logger"
 	"context"
-	"fmt"
-	"log/slog"
 	"slices"
 	"strconv"
 	"strings"
@@ -64,7 +63,7 @@ func (l *logicFactory) openLogicChain(ctx context.Context, strategyID int64) (lo
 
 	ruleModels := strategy.GetRuleModels()
 
-	slog.InfoContext(ctx, "openLogicChain", "strategyID", strategyID, "ruleModels", ruleModels)
+	logger.InfoContext(ctx, "openLogicChain", "strategyID", strategyID, "ruleModels", ruleModels)
 
 	if len(ruleModels) == 0 {
 		return l.logicChainGroup[RuleDefault].clone(), nil
@@ -72,7 +71,7 @@ func (l *logicFactory) openLogicChain(ctx context.Context, strategyID int64) (lo
 
 	firstNode, ok := l.logicChainGroup[ruleModels[0]]
 	if !ok {
-		slog.WarnContext(ctx, "未知的规则节点", "ruleModel", ruleModels[0])
+		logger.WarnContext(ctx, "未知的规则节点", "ruleModel", ruleModels[0])
 		// 如果第一个节点都不存在，可以直接降级走默认逻辑
 		return l.logicChainGroup[RuleDefault].clone(), nil
 	}
@@ -107,7 +106,7 @@ func newRuleDefaultLogic(armory *armoryDispatch) *defaultChain {
 }
 
 func (d *defaultChain) logic(ctx context.Context, userID string, strategyID int64) (*logicResult, error) {
-	slog.Info("责任链-默认抽奖，随机抽取一个奖品", "userID", userID, "strategyID", strategyID)
+	logger.Info("责任链-默认抽奖，随机抽取一个奖品", "userID", userID, "strategyID", strategyID)
 
 	awardID, err := d.armoryDispatch.getRandomAwardIDWithWeight(ctx, strategyID, "")
 	if err != nil {
@@ -140,7 +139,7 @@ func newRuleBlackListLogic(repo Repo) *ruleBlackListLogic {
 }
 
 func (r *ruleBlackListLogic) logic(ctx context.Context, userID string, strategyID int64) (*logicResult, error) {
-	slog.Info("规则过滤-黑名单",
+	logger.Info("规则过滤-黑名单",
 		"userID", userID,
 		"strategyID", strategyID,
 		"ruleModel", RuleBlacklist,
@@ -153,17 +152,17 @@ func (r *ruleBlackListLogic) logic(ctx context.Context, userID string, strategyI
 
 	parts := strings.Split(ruleValue, common.COLON)
 	if len(parts) < 2 {
-		return nil, fmt.Errorf("invalid ruleValue format, expected 'awardID:blackList'")
+		return nil, ErrBlackListConfigInvalid.WithMetadata(map[string]string{"rule_value": ruleValue})
 	}
 
 	awardID, err := strconv.ParseInt(parts[0], 10, 64)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse awardID from ruleValue: %w", err)
+		return nil, ErrBlackListConfigParseFailed.WithCause(err)
 	}
 
 	for _, blackID := range strings.Split(parts[1], common.SPLIT) {
 		if userID == blackID {
-			slog.Info("用户在黑名单中，不允许抽奖",
+			logger.Info("用户在黑名单中，不允许抽奖",
 				"userID", userID,
 				"strategyID", strategyID,
 				"awardID", awardID,
@@ -196,7 +195,7 @@ func newRuleWeightLogic(repo Repo, armory *armoryDispatch) *ruleWeightLogic {
 }
 
 func (r *ruleWeightLogic) logic(ctx context.Context, userID string, strategyID int64) (*logicResult, error) {
-	slog.Info("规则过滤-权重",
+	logger.Info("规则过滤-权重",
 		"userID", userID,
 		"strategyID", strategyID,
 		"ruleModel", RuleWeight,
@@ -254,7 +253,7 @@ func (r *ruleWeightLogic) getAnalyticalValue(ruleValue string) (map[int]string, 
 
 		parts := strings.Split(singleRule, common.COLON)
 		if len(parts) < 2 {
-			return nil, fmt.Errorf("rule_weight rule_rule invalid input format: %s", singleRule)
+			return nil, ErrRuleWeightConfigInvalid.WithMetadata(map[string]string{"rule": singleRule})
 		}
 
 		key, err := strconv.Atoi(parts[0])

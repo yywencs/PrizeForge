@@ -3,11 +3,11 @@ package data
 import (
 	"big-market-kratos/internal/biz/award"
 	"big-market-kratos/internal/data/po"
-	"big-market-kratos/pkg/rabbitmq"
+	"big-market-kratos/pkg/cache"
+	"big-market-kratos/pkg/logger"
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"strings"
 	"time"
 
@@ -17,69 +17,63 @@ import (
 type UserAwardRecord struct {
 	routerDB  *DBRouter
 	publisher *Publisher
+	redis     *cache.Cache
 }
 
-func NewUserAwardRecordRepository(db *DBRouter, publisher *Publisher) award.Repo {
+func NewUserAwardRecordRepository(db *DBRouter, redis *cache.Cache, publisher *Publisher) award.Repo {
 	return &UserAwardRecord{
 		routerDB:  db,
+		redis:     redis,
 		publisher: publisher,
 	}
 }
 
 func (r *UserAwardRecord) SaveUserAwardRecord(ctx context.Context, aggregate *award.UserAwardTaskInfo) error {
 	userAwardRecordPO := convertToUserAwardRecordPO(aggregate.UserAwardRecord)
-	taskPO, err := convertToTaskPO(aggregate.Task)
-	if err != nil {
-		return err
+	taskPO, taskErr := convertToTaskPO(aggregate.Task)
+	if taskErr != nil {
+		return taskErr
 	}
 
 	// Calculate DB suffix based on UserID
 	db, tableSuffix := r.routerDB.DBStrategy(aggregate.UserAwardRecord.UserID)
 
 	// 1. Transaction
-	err = db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	txnErr := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		// 1.1 Create UserAwardRecord
-		if err := tx.Table("user_award_record_" + tableSuffix).Create(userAwardRecordPO).Error; err != nil {
+		if createAwardErr := tx.Table("user_award_record_" + tableSuffix).Create(userAwardRecordPO).Error; createAwardErr != nil {
 			// Handle duplicate key error (idempotency)
-			if errors.Is(err, gorm.ErrDuplicatedKey) || strings.Contains(err.Error(), "Duplicate entry") {
+			if errors.Is(createAwardErr, gorm.ErrDuplicatedKey) || strings.Contains(createAwardErr.Error(), "Duplicate entry") {
 				return nil
 			}
-			return err
+			return createAwardErr
 		}
 
 		// 1.2 Create Task
-		if err := tx.Table("task_" + tableSuffix).Create(taskPO).Error; err != nil {
-			return err
+		if createTaskErr := tx.Table("task").Create(taskPO).Error; createTaskErr != nil {
+			return createTaskErr
 		}
 
 		// 1.3 Update Raffle Order State
 		// Note: user_raffle_order table might also be sharded. Assuming same shard as user_award_record for now as it is based on UserID usually.
-		if err := tx.Table("user_raffle_order_"+tableSuffix).
+		if updateOrderErr := tx.Table("user_raffle_order_"+tableSuffix).
 			Where("order_id = ?", userAwardRecordPO.OrderID).
-			Update("order_state", "used").Error; err != nil {
-			return err
+			Update("order_state", "used").Error; updateOrderErr != nil {
+			return updateOrderErr
 		}
 
 		return nil
 	})
 
-	if err != nil {
-		return err
+	if txnErr != nil {
+		return txnErr
 	}
 
-	// 2. Send MQ Message (Async)
-	go func() {
-		// Construct BaseEvent
-		baseEvent := rabbitmq.BaseEvent{
-			ID:        aggregate.Task.MessageID,
-			Timestamp: time.Now(),
-			Data:      aggregate.Task.Message,
-		}
-
-		// Publish message
-		// Note: using context.Background() for async task
-		_ = r.publisher.PublishSendAward(context.Background(), &baseEvent)
-	}()
+	pendingOrderKey := GetPendingRaffleOrderKey(aggregate.UserAwardRecord.ActivityID, aggregate.UserAwardRecord.UserID)
+	if err := r.redis.Delete(ctx, pendingOrderKey); err != nil {
+		// Redis pending 订单是流程态缓存，不影响中奖账本主流程。
+		logger.Warn("delete pending raffle order failed", "key", pendingOrderKey, "err", err)
+	}
 
 	return nil
 }
@@ -102,7 +96,7 @@ func convertToUserAwardRecordPO(entity *award.UserAwardRecord) *po.UserAwardReco
 func convertToTaskPO(entity *award.Task) (*po.Task, error) {
 	msgBytes, err := json.Marshal(entity.Message)
 	if err != nil {
-		return nil, fmt.Errorf("marshal task message error: %v", err)
+		return nil, award.ErrorTaskPayloadMarshal.WithCause(err)
 	}
 
 	return &po.Task{

@@ -3,6 +3,7 @@ package server
 import (
 	v1 "big-market-kratos/api/bigmarket/v1"
 	"big-market-kratos/internal/conf"
+	"big-market-kratos/internal/dcc"
 	"big-market-kratos/internal/service"
 
 	"github.com/go-kratos/kratos/v2/log"
@@ -11,10 +12,11 @@ import (
 )
 
 // NewHTTPServer new an HTTP server.
-func NewHTTPServer(c *conf.Server, strategy *service.StrategyService, activity *service.ActivityService, logger log.Logger) *http.Server {
+func NewHTTPServer(c *conf.Server, strategy *service.StrategyService, activity *service.ActivityService, logger log.Logger, dcc dcc.ConfigGetter) *http.Server {
 	var opts = []http.ServerOption{
 		http.Middleware(
 			recovery.Recovery(),
+			// middleware.DegradeMiddleware(dcc),
 		),
 	}
 	if c.Http.Network != "" {

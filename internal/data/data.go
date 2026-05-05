@@ -140,6 +140,11 @@ func (r *DBRouter) GetDB(dbIdx int) *gorm.DB {
 	return r.dbMap[dbKey]
 }
 
+// GetDBCount 获取分库数量
+func (r *DBRouter) GetDBCount() int {
+	return r.dbCount
+}
+
 // =======================Redis ==========================
 func NewRedisClient(cfg *conf.Data_Redis) *cache.Cache {
 	// 1. 组装 Options

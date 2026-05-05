@@ -26,6 +26,7 @@ func (s *AwardUsecase) SaveUserAwardRecord(ctx context.Context, userAwardRecord 
 
 	task := &Task{
 		UserID:    userAwardRecord.UserID,
+		Topic:     SendAwardTopic,
 		MessageID: baseEvent.ID,
 		Message:   sendAwardMessage,
 		State:     TaskStateCreate,

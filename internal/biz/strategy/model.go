@@ -2,7 +2,6 @@ package strategy
 
 import (
 	"big-market-kratos/pkg/common"
-	"fmt"
 	"slices"
 	"strconv"
 	"strings"
@@ -128,7 +127,7 @@ func (sr *StrategyRule) GetRuleWeightValues() (map[string][]int64, error) {
 			}
 			val, err := strconv.ParseInt(value, 10, 64)
 			if err != nil {
-				return nil, fmt.Errorf("invalid number format in %s: %v", ruleValue, err)
+				return nil, ErrRuleWeightValueInvalidFormat.WithCause(err).WithMetadata(map[string]string{"rule_value": ruleValue})
 			}
 			values = append(values, val)
 		}

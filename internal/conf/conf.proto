@@ -11,7 +11,7 @@ message Bootstrap {
   Data data = 3;
   Asynq asynq = 4;
   Log log = 5;
-  DccConfig dcc = 6;
+  Dcc dcc = 6;
 }
 
 message Server {
@@ -82,9 +82,10 @@ message Etcd {
   google.protobuf.Duration timeout = 2;
 }
 
-message DccConfig {
-  bool enable_degrade = 1; // 降级开关
-  string black_list = 2; // 黑名单 (对应你 yaml 里的字符串)
+message Dcc {
+  int32 rate_limit = 1; // 限流阈值
+  bool enable_degrade = 2; // 降级开关
+  string black_list = 3; // 黑名单 (对应你 yaml 里的字符串)
 }
 
 message Asynq {

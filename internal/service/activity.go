@@ -44,10 +44,17 @@ func (s *ActivityService) RaffleActivityArmory(ctx context.Context, req *v1.Raff
 	if !activityReady {
 		return &v1.RaffleActivityArmoryReply{Success: false}, nil
 	}
-	strategyReady, err := s.strategyUsecase.AssembleLotteryStrategy(ctx, req.GetActivityId())
+	strategyReady, err := s.strategyUsecase.AssembleLotteryStrategyByActivityId(ctx, req.GetActivityId())
 	if err != nil {
 		return nil, err
 	}
+
+	// 装配用户额度到缓存
+	err = s.quotaUsecase.AssembleActivityAccountByActivityId(ctx, req.GetActivityId())
+	if err != nil {
+		return nil, err
+	}
+
 	return &v1.RaffleActivityArmoryReply{Success: strategyReady}, nil
 }
 
@@ -55,13 +62,15 @@ func (s *ActivityService) Draw(ctx context.Context, req *v1.DrawRequest) (*v1.Dr
 	if req.GetUserId() == "" || req.GetActivityId() <= 0 {
 		return nil, kerrors.BadRequest("INVALID_DRAW_PARAMS", "invalid user_id or activity_id")
 	}
-	userRaffleOrder, err := s.partakeUsecase.CreateOrder(ctx, &activity.PartakeRaffleActivity{
+	createPartakeOrderAggregate, err := s.partakeUsecase.CreateOrder(ctx, &activity.PartakeRaffleActivity{
 		UserID:     req.GetUserId(),
 		ActivityID: req.GetActivityId(),
 	})
 	if err != nil {
 		return nil, err
 	}
+	userRaffleOrder := createPartakeOrderAggregate.UserRaffleOrder
+
 	raffleAward, err := s.strategyUsecase.PerformRaffle(ctx, &strategy.RaffleFactor{
 		UserID:     req.GetUserId(),
 		StrategyID: userRaffleOrder.StrategyID,
@@ -69,6 +78,8 @@ func (s *ActivityService) Draw(ctx context.Context, req *v1.DrawRequest) (*v1.Dr
 	if err != nil {
 		return nil, err
 	}
+
+	// 同步记录中奖事实和 outbox task，再由后台任务异步发奖。
 	err = s.awardUsecase.SaveUserAwardRecord(ctx, &award.UserAwardRecord{
 		UserID:     req.GetUserId(),
 		ActivityID: req.GetActivityId(),
@@ -82,6 +93,7 @@ func (s *ActivityService) Draw(ctx context.Context, req *v1.DrawRequest) (*v1.Dr
 	if err != nil {
 		return nil, err
 	}
+
 	return &v1.DrawReply{
 		AwardId:    raffleAward.AwardID,
 		AwardTitle: raffleAward.AwardTitle,

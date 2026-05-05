@@ -15,7 +15,7 @@ func NewActivityPartakeUsecase(repo Repo) *ActivityPartakeUsecase {
 	return &ActivityPartakeUsecase{repo: repo}
 }
 
-func (s *ActivityPartakeUsecase) CreateOrder(ctx context.Context, partake *PartakeRaffleActivity) (*UserRaffleOrder, error) {
+func (s *ActivityPartakeUsecase) CreateOrder(ctx context.Context, partake *PartakeRaffleActivity) (*CreatePartakeOrder, error) {
 	userID, activityID := partake.UserID, partake.ActivityID
 	currentTime := time.Now()
 
@@ -34,29 +34,37 @@ func (s *ActivityPartakeUsecase) CreateOrder(ctx context.Context, partake *Parta
 		return nil, ErrActivityTimeError
 	}
 
-	// 检验用户是否已参与活动
-	order, err := s.repo.QueryNoUsedRaffleOrder(ctx, userID, activityID)
-	if err != nil {
-		return nil, err
-	}
-	if order != nil {
-		return order, nil
-	}
-
 	createPartakeOrderAggregate, err := s.doFilterAccount(ctx, userID, activityID, currentTime)
 	if err != nil {
 		return nil, err
 	}
 
-	order = s.buildUserRaffleOrder(userID, activity, currentTime)
-
-	createPartakeOrderAggregate.UserRaffleOrder = order
-
-	err = s.repo.SaveCreatePartakeOrderAggregate(ctx, createPartakeOrderAggregate)
+	newOrder := s.buildUserRaffleOrder(userID, activity, currentTime)
+	userRaffleOrder, reused, err := s.repo.CacheGetOrCreateNoUsedRaffleOrder(ctx, newOrder)
 	if err != nil {
 		return nil, err
 	}
-	return order, nil
+	if reused {
+		return &CreatePartakeOrder{
+			UserID:          userID,
+			ActivityID:      activityID,
+			UserRaffleOrder: userRaffleOrder,
+		}, nil
+	}
+
+	createPartakeOrderAggregate.UserRaffleOrder = userRaffleOrder
+
+	// 先同步写入最小化抽奖订单，确保后续抽奖和发奖都有可靠订单根。
+	err = s.repo.SaveLiteUserRaffleOrder(ctx, createPartakeOrderAggregate)
+	if err != nil {
+		return nil, err
+	}
+
+	return createPartakeOrderAggregate, nil
+}
+
+func (s *ActivityPartakeUsecase) SaveOrderRecord(ctx context.Context, aggregate *CreatePartakeOrder) error {
+	return s.repo.SaveCreatePartakeOrderAggregate(ctx, aggregate)
 }
 
 func (s *ActivityPartakeUsecase) doFilterAccount(ctx context.Context, userID string, activityID int64, currentTime time.Time) (*CreatePartakeOrder, error) {

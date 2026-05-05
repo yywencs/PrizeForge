@@ -2,9 +2,9 @@
 package server
 
 import (
+	"big-market-kratos/pkg/logger"
 	"context"
 	"fmt"
-	"log/slog"
 
 	"big-market-kratos/internal/biz/activity"
 	"big-market-kratos/internal/biz/task"
@@ -47,7 +47,7 @@ func NewAsynqServer(
 				"low":                                    1,
 			},
 			ErrorHandler: asynq.ErrorHandlerFunc(func(ctx context.Context, task *asynq.Task, err error) {
-				slog.Error("process task failed", "type", task.Type(), "payload", string(task.Payload()), "err", err)
+				logger.Error("process task failed", "type", task.Type(), "payload", string(task.Payload()), "err", err)
 			}),
 		},
 	)
@@ -62,7 +62,7 @@ func NewAsynqServer(
 
 	// 注册定时任务
 	if _, err := scheduler.Register("@every 5s", asynq.NewTask(activity.TaskTypeActivityStateSync, nil)); err != nil {
-		slog.Error("Register scheduler failed", "err", err)
+		logger.Error("Register scheduler failed", "err", err)
 	}
 
 	return &AsynqServer{
@@ -73,7 +73,7 @@ func NewAsynqServer(
 }
 
 func (s *AsynqServer) Start(ctx context.Context) error {
-	slog.Info("Asynq Server starting...")
+	logger.Info("Asynq Server starting...")
 	if err := s.scheduler.Start(); err != nil {
 		return fmt.Errorf("scheduler start failed: %w", err)
 	}
@@ -86,7 +86,7 @@ func (s *AsynqServer) Start(ctx context.Context) error {
 
 // 🌟 改造 2：适配 Kratos 的 Stop(ctx)
 func (s *AsynqServer) Stop(ctx context.Context) error {
-	slog.Info("Asynq Server stopping...")
+	logger.Info("Asynq Server stopping...")
 	s.scheduler.Shutdown()
 	s.server.Shutdown()
 	return nil

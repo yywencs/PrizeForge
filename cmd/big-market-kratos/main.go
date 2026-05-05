@@ -2,12 +2,16 @@ package main
 
 import (
 	"flag"
+	_ "net/http/pprof"
 	"os"
 
 	"big-market-kratos/internal/conf"
+	"big-market-kratos/internal/dcc"
+	"big-market-kratos/pkg/logger"
 
 	"big-market-kratos/internal/server"
 
+	"github.com/go-kratos/kratos/contrib/config/etcd/v2"
 	"github.com/go-kratos/kratos/v2"
 	"github.com/go-kratos/kratos/v2/config"
 	"github.com/go-kratos/kratos/v2/config/file"
@@ -15,6 +19,7 @@ import (
 	"github.com/go-kratos/kratos/v2/middleware/tracing"
 	"github.com/go-kratos/kratos/v2/transport/grpc"
 	"github.com/go-kratos/kratos/v2/transport/http"
+	clientv3 "go.etcd.io/etcd/client/v3"
 
 	_ "go.uber.org/automaxprocs"
 )
@@ -51,26 +56,34 @@ func newApp(
 		kratos.Server(
 			gs,
 			hs,
-			asynqSrv,
-			rmqSrv,
+			// asynqSrv,
+			// rmqSrv,
 		),
 	)
 }
 
 func main() {
 	flag.Parse()
-	logger := log.With(log.NewStdLogger(os.Stdout),
-		"ts", log.DefaultTimestamp,
-		"caller", log.DefaultCaller,
-		"service.id", id,
-		"service.name", Name,
-		"service.version", Version,
-		"trace.id", tracing.TraceID(),
-		"span.id", tracing.SpanID(),
-	)
+	// go func() {
+	// 	httpprof.ListenAndServe("0.0.0.0:6060", nil)
+	// }()
+
+	client, err := clientv3.New(clientv3.Config{
+		Endpoints: []string{"172.30.0.10:2379"},
+	})
+	if err != nil {
+		panic(err)
+	}
+
+	source, err := etcd.New(client, etcd.WithPath("configs/config.yaml"))
+	if err != nil {
+		panic(err)
+	}
+
 	c := config.New(
 		config.WithSource(
 			file.NewSource(flagconf),
+			source,
 		),
 	)
 	defer c.Close()
@@ -80,11 +93,39 @@ func main() {
 	}
 
 	var bc conf.Bootstrap
+
 	if err := c.Scan(&bc); err != nil {
 		panic(err)
 	}
 
-	app, cleanup, err := wireApp(bc.Server, bc.Data, bc.Rabbitmq, bc.Asynq, logger)
+	logger.Init(logger.Config{
+		Filename:   bc.Log.Filename,
+		MaxSize:    int(bc.Log.MaxSize),
+		MaxBackups: int(bc.Log.MaxBackups),
+		MaxAge:     int(bc.Log.MaxAge),
+		Level:      bc.Log.Level,
+		Compress:   bc.Log.Compress,
+	})
+
+	logInstance := log.With(logger.NewKratosLogger(logger.Log),
+		"ts", log.DefaultTimestamp,
+		"caller", log.DefaultCaller,
+		"service.id", id,
+		"service.name", Name,
+		"service.version", Version,
+		"trace.id", tracing.TraceID(),
+		"span.id", tracing.SpanID(),
+	)
+	log.SetLogger(logInstance)
+
+	fallback := dcc.NewFallback("./data/fallback_snapshot.json", logInstance)
+	dccManager := dcc.NewManager(c, "dcc", logInstance, fallback)
+
+	if err := dccManager.Init(); err != nil {
+		panic("DCC 初始化失败，应用无法启动: " + err.Error())
+	}
+
+	app, cleanup, err := wireApp(bc.Server, bc.Data, bc.Rabbitmq, bc.Asynq, logInstance, dccManager)
 	if err != nil {
 		panic(err)
 	}

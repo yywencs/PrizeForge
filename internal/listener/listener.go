@@ -6,4 +6,5 @@ var ProviderSet = wire.NewSet(
 	NewAwardSendListener,
 	NewActivityStockListener,
 	NewRebateListener,
+	NewSaveOrderListener,
 )

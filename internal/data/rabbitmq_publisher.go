@@ -80,5 +80,13 @@ func (p *Publisher) PublishSendRebate(ctx context.Context, event *rabbitmq.BaseE
 }
 
 func (p *Publisher) PublishSendAward(ctx context.Context, event *rabbitmq.BaseEvent) error {
-	return p.client.Publish(ctx, p.topic.SendRebate, event)
+	return p.client.Publish(ctx, p.topic.SendAward, event)
+}
+
+func (p *Publisher) PublishTopic(ctx context.Context, topic string, event *rabbitmq.BaseEvent) error {
+	return p.client.Publish(ctx, topic, event)
+}
+
+func (p *Publisher) PublishSaveOrder(ctx context.Context, event *rabbitmq.BaseEvent) error {
+	return p.client.Publish(ctx, "save_order_record", event)
 }

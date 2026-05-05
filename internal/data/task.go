@@ -13,9 +13,10 @@ type TaskRepository struct {
 	publisher *Publisher
 }
 
-func NewTaskRepository(routerDB *DBRouter) task.Repo {
+func NewTaskRepository(routerDB *DBRouter, publisher *Publisher) task.Repo {
 	return &TaskRepository{
-		routerDB: routerDB,
+		routerDB:  routerDB,
+		publisher: publisher,
 	}
 }
 
@@ -55,6 +56,6 @@ func (r *TaskRepository) UpdateTaskSendMessageFail(ctx context.Context, userID, 
 		Update("state", "fail").Error
 }
 
-func (r *TaskRepository) SendAwardMessage(ctx context.Context, event *rabbitmq.BaseEvent) error {
-	return r.publisher.PublishSendAward(ctx, event)
+func (r *TaskRepository) SendMessage(ctx context.Context, topic string, event *rabbitmq.BaseEvent) error {
+	return r.publisher.PublishTopic(ctx, topic, event)
 }

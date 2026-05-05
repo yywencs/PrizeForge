@@ -4,13 +4,12 @@ import (
 	"big-market-kratos/internal/biz/activity"
 	"big-market-kratos/internal/data/po"
 	"big-market-kratos/pkg/cache"
-	"big-market-kratos/pkg/common"
+	"big-market-kratos/pkg/logger"
 	"big-market-kratos/pkg/rabbitmq"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log/slog"
 	"strconv"
 	"strings"
 	"time"
@@ -66,7 +65,7 @@ func (d *Repository) QueryActivitySku(ctx context.Context, sku int64) (*activity
 		Ctx:   ctx,
 		Key:   cacheKey,
 		Value: &activitySku,
-		TTL:   10 * time.Minute,
+		TTL:   10 * 24 * time.Hour,
 		Do: func(*cache.Item) (interface{}, error) {
 			var dbResult po.RaffleActivitySku
 			err := d.db.WithContext(ctx).
@@ -100,7 +99,7 @@ func (d *Repository) QueryRaffleActivityByActivityId(ctx context.Context, activi
 		Ctx:   ctx,
 		Key:   cacheKey,
 		Value: &activity,
-		TTL:   10 * time.Minute,
+		TTL:   10 * 24 * time.Hour,
 		Do: func(*cache.Item) (interface{}, error) {
 			var dbResult po.RaffleActivity
 			err := d.db.WithContext(ctx).
@@ -134,7 +133,7 @@ func (d *Repository) QueryRaffleActivityCountByActivityCountId(ctx context.Conte
 		Ctx:   ctx,
 		Key:   cacheKey,
 		Value: &activityCount,
-		TTL:   10 * time.Minute,
+		TTL:   10 * 24 * time.Hour,
 		Do: func(*cache.Item) (interface{}, error) {
 			var dbResult po.RaffleActivityCount
 			err := d.db.WithContext(ctx).
@@ -314,9 +313,9 @@ func (d *Repository) CacheActivitySkuStockCount(ctx context.Context, cacheKey st
 	}
 
 	if success {
-		slog.Info("库存预热成功", "cacheKey", cacheKey, "stockCount", stockCount)
+		logger.Info("库存预热成功", "cacheKey", cacheKey, "stockCount", stockCount)
 	} else {
-		slog.Info("库存预热失败，key已存在", "cacheKey", cacheKey)
+		logger.Info("库存预热失败，key已存在", "cacheKey", cacheKey)
 	}
 	return nil
 }
@@ -407,41 +406,91 @@ func (d *Repository) ClearQueueValue(ctx context.Context) error {
 	return nil
 }
 
-func (d *Repository) SubtractionActivitySkuStock(ctx context.Context, skuID int64, endTime time.Time) (bool, error) {
-	cacheKey := GetActivitySkuStockCountKey(skuID)
+func (d *Repository) SubtractionActivitySkuStock(ctx context.Context, skuID int64, activityID int64, userID string, endTime time.Time) (*activity.ActivityResult, error) {
+	stockKey := GetActivitySkuStockCountKey(skuID)
 
-	surplus, err := d.redis.Decr(ctx, cacheKey)
+	// 计算用户分片，避免bigkey问题
+	const shardCount = 100
+	shard := 0
+	for _, c := range userID {
+		shard = (shard*31 + int(c)) % shardCount
+	}
+	resultKey := GetActivityResultHashKey(activityID, shard)
+
+	// Redis Lua脚本实现原子性库存扣减和结果存储
+	script := `
+		local stock_key = KEYS[1]
+		local result_key = KEYS[2]
+		local user_id = ARGV[1]
+		local sku_id = ARGV[2]
+		local current_time = ARGV[3]
+		local points_result = ARGV[4]  -- 积分标识，如 "POINTS_100"
+		
+		-- 检查库存
+		local current_stock = redis.call('GET', stock_key)
+		if not current_stock then
+			return {-1, "库存未初始化"}  -- 返回数组格式
+		end
+		
+		current_stock = tonumber(current_stock)
+		if current_stock <= 0 then
+			-- 库存不足，返回积分结果
+			local result_json = string.format('{"u":"%s","s":2,"r":"%s","t":%s}', user_id, points_result, current_time)
+			redis.call('HSET', result_key, user_id, result_json)
+			return {2, result_json}  -- 状态码2表示积分
+		end
+		
+		-- 扣减库存
+		local new_stock = redis.call('DECR', stock_key)
+		
+		-- 存储抽奖成功结果
+		local result_json = string.format('{"u":"%s","s":1,"r":"SKU_%s","t":%s}', user_id, sku_id, current_time)
+		redis.call('HSET', result_key, user_id, result_json)
+		
+		-- 如果库存刚好为0，返回特殊标记
+		if new_stock == 0 then
+			return {0, result_json}  -- 状态码0表示库存耗尽但成功
+		end
+		
+		return {1, result_json}  -- 状态码1表示抽奖成功
+	`
+
+	// 生成积分标识，如 "POINTS_100"
+	pointsResult := fmt.Sprintf("%s_%d", activity.ActivityResultPointsPrefix, 100) // 这里可以根据业务配置调整积分值
+
+	result, err := d.redis.Eval(ctx, script, []string{stockKey, resultKey}, userID, strconv.FormatInt(skuID, 10), strconv.FormatInt(time.Now().Unix(), 10), pointsResult)
 	if err != nil {
-		return false, err
+		return nil, err
 	}
 
-	if surplus == 0 {
-		// 发送MQ消息
+	// 解析Lua脚本返回的结果
+	resultArray := result.([]interface{})
+	status := resultArray[0].(int64)
+	resultJSON := resultArray[1].(string)
+
+	// 解析JSON结果
+	var activityResult activity.ActivityResult
+	if err := json.Unmarshal([]byte(resultJSON), &activityResult); err != nil {
+		return nil, err
+	}
+
+	switch status {
+	case -1:
+		return nil, errors.New("库存未初始化")
+	case 0:
+		// 库存刚好耗尽，发送MQ消息
 		stockZeroEvent := rabbitmq.NewBaseEvent(skuID)
 		if err := d.stockZeroPublisher.PublishStockZero(ctx, stockZeroEvent); err != nil {
-			return false, err
+			logger.Error("发送库存耗尽MQ消息失败", "skuID", skuID, "error", err)
 		}
-	} else if surplus < 0 {
-		// 库存不足，回滚
-		if _, err := d.redis.Incr(ctx, cacheKey); err != nil {
-			return false, err
-		}
-		return false, nil
+		return &activityResult, nil
+	case 1:
+		return &activityResult, nil // 抽奖成功
+	case 2:
+		return &activityResult, nil // 返回积分
+	default:
+		return nil, errors.New("未知结果")
 	}
-
-	lockKey := cacheKey + common.UNDERLINE + strconv.FormatInt(surplus, 10)
-	expiredMillis := time.Until(endTime) + 24*time.Hour
-	lock, err := d.redis.SetNX(ctx, lockKey, "1", time.Duration(expiredMillis)*time.Millisecond)
-	if err != nil {
-		return false, err
-	}
-	if !lock {
-		slog.Info("活动sku库存加锁失败", "lockKey", lockKey)
-		d.redis.Incr(ctx, cacheKey)
-		return false, nil
-	}
-
-	return true, nil
 }
 
 func (d *Repository) ActivitySkuStockConsumeSendQueue(ctx context.Context, skuStockKey *activity.ActivitySkuStockKey) error {
@@ -456,7 +505,7 @@ func (d *Repository) ActivitySkuStockConsumeSendQueue(ctx context.Context, skuSt
 		return err
 	}
 
-	slog.Info("ActivitySkuStockConsumeSendQueue", "taskId", info.ID, "queue", info.Queue)
+	logger.Info("ActivitySkuStockConsumeSendQueue", "taskId", info.ID, "queue", info.Queue)
 	return nil
 }
 
@@ -464,7 +513,7 @@ func (d *Repository) ActivitySkuStockConsumeSendQueue(ctx context.Context, skuSt
 func (d *Repository) TakeQueueValue(ctx context.Context, task *asynq.Task) (*activity.ActivitySkuStockKey, error) {
 	var skuStockKey activity.ActivitySkuStockKey
 	if err := json.Unmarshal(task.Payload(), &skuStockKey); err != nil {
-		return nil, fmt.Errorf("json.Unmarshal failed: %v: %w", err, asynq.SkipRetry)
+		return nil, fmt.Errorf("json.Unmarshal failed: %w: %w: %w", err, activity.ErrActivitySkuStockKeyUnmarshal, asynq.SkipRetry)
 	}
 
 	return &skuStockKey, nil
@@ -477,10 +526,110 @@ func (d *Repository) UpdateActivitySkuStock(ctx context.Context, sku int64) erro
 		Update("stock_count_surplus", gorm.Expr("stock_count_surplus - 1")).Error
 
 	if err != nil {
-		slog.Error("UpdateActivitySkuStock failed", "sku", sku, "err", err)
+		logger.Error("UpdateActivitySkuStock failed", "sku", sku, "err", err)
 		return err
 	}
 
-	slog.Info("UpdateActivitySkuStock success", "sku", sku)
+	logger.Info("UpdateActivitySkuStock success", "sku", sku)
+	return nil
+}
+
+func (d *Repository) AssembleActivityAccountByActivityId(ctx context.Context, activityID int64) error {
+	// 使用一个脱离原始 HTTP 请求的 Background Context 来进行耗时较长的批量装配
+	// 避免因为装配大量数据导致 HTTP 请求本身超时从而中止了整个装配过程
+	assembleCtx := context.Background()
+
+	dbCount := d.routerDB.GetDBCount()
+	for i := 1; i <= dbCount; i++ {
+		db := d.routerDB.GetDB(i)
+		if db == nil {
+			continue
+		}
+
+		var accounts []po.RaffleActivityAccount
+		err := db.WithContext(assembleCtx).Table("raffle_activity_account").
+			Where("activity_id = ?", activityID).
+			Find(&accounts).Error
+		if err != nil {
+			logger.Error("AssembleActivityAccountByActivityId query failed", "db", i, "err", err)
+			continue
+		}
+
+		for _, account := range accounts {
+			// Query day and month accounts to assemble a full entity
+			var accountMonthPO po.RaffleActivityAccountMonth
+			month := time.Now().Format("2006-01")
+			_ = db.WithContext(assembleCtx).Table("raffle_activity_account_month").
+				Where("user_id = ? AND activity_id = ? AND month = ?", account.UserID, activityID, month).
+				First(&accountMonthPO).Error
+
+			var accountDayPO po.RaffleActivityAccountDay
+			day := time.Now().Format("2006-01-02")
+			_ = db.WithContext(assembleCtx).Table("raffle_activity_account_day").
+				Where("user_id = ? AND activity_id = ? AND day = ?", account.UserID, activityID, day).
+				First(&accountDayPO).Error
+
+			activityAccount := &activity.ActivityAccount{
+				UserID:            account.UserID,
+				ActivityID:        account.ActivityID,
+				TotalCount:        account.TotalCount,
+				TotalCountSurplus: account.TotalCountSurplus,
+				DayCount:          account.DayCount,
+				DayCountSurplus:   account.DayCountSurplus,
+				MonthCount:        account.MonthCount,
+				MonthCountSurplus: account.MonthCountSurplus,
+			}
+
+			if accountMonthPO.ID > 0 {
+				activityAccount.MonthCount = accountMonthPO.MonthCount
+				activityAccount.MonthCountSurplus = accountMonthPO.MonthCountSurplus
+			} else {
+				// 如果没有月账户，使用总表中的配置
+				activityAccount.MonthCount = account.MonthCount
+				activityAccount.MonthCountSurplus = account.MonthCountSurplus
+			}
+
+			if accountDayPO.ID > 0 {
+				activityAccount.DayCount = accountDayPO.DayCount
+				activityAccount.DayCountSurplus = accountDayPO.DayCountSurplus
+			} else {
+				// 如果没有日账户，使用总表中的配置
+				activityAccount.DayCount = account.DayCount
+				activityAccount.DayCountSurplus = account.DayCountSurplus
+			}
+
+			key := GetActivityAccountKey(activityID, account.UserID)
+			_ = d.redis.Set(&cache.Item{
+				Ctx:   assembleCtx,
+				Key:   key,
+				Value: activityAccount,
+				TTL:   time.Hour,
+			})
+
+			totalKey := GetActivityAccountTotalSurplusKey(activityID, account.UserID)
+			_ = d.redis.Set(&cache.Item{
+				Ctx:   assembleCtx,
+				Key:   totalKey,
+				Value: activityAccount.TotalCountSurplus,
+				TTL:   time.Hour,
+			})
+
+			monthKey := GetActivityAccountMonthSurplusKey(activityID, account.UserID, month)
+			_ = d.redis.Set(&cache.Item{
+				Ctx:   assembleCtx,
+				Key:   monthKey,
+				Value: activityAccount.MonthCountSurplus,
+				TTL:   time.Hour,
+			})
+
+			dayKey := GetActivityAccountDaySurplusKey(activityID, account.UserID, day)
+			_ = d.redis.Set(&cache.Item{
+				Ctx:   assembleCtx,
+				Key:   dayKey,
+				Value: activityAccount.DayCountSurplus,
+				TTL:   time.Hour,
+			})
+		}
+	}
 	return nil
 }

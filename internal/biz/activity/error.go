@@ -14,8 +14,9 @@ var (
 )
 
 var (
-	ErrDBRouterError              = errors.BadRequest("DB_ROUTER_ERROR", "数据库路由错误")
-	ErrDBIndexDuplicate           = errors.BadRequest("DB_INDEX_DUPLICATE", "数据库索引重复")
-	ErrRecordNotFound             = errors.NotFound("RECORD_NOT_FOUND", "记录不存在")
-	ErrClearActivitySkuStockError = errors.BadRequest("CLEAR_ACTIVITY_SKU_STOCK_ERROR", "清除活动商品库存失败")
+	ErrDBRouterError                = errors.BadRequest("DB_ROUTER_ERROR", "数据库路由错误")
+	ErrDBIndexDuplicate             = errors.BadRequest("DB_INDEX_DUPLICATE", "数据库索引重复")
+	ErrRecordNotFound               = errors.NotFound("RECORD_NOT_FOUND", "记录不存在")
+	ErrClearActivitySkuStockError   = errors.BadRequest("CLEAR_ACTIVITY_SKU_STOCK_ERROR", "清除活动商品库存失败")
+	ErrActivitySkuStockKeyUnmarshal = errors.BadRequest("ACTIVITY_SKU_STOCK_KEY_UNMARSHAL_ERROR", "活动商品库存队列消息解析失败")
 )

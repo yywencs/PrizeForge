@@ -210,6 +210,37 @@ func (s UserRaffleOrderState) Desc() string {
 	}
 }
 
+type AccountSyncState string
+
+const (
+	AccountSyncStateCreate    AccountSyncState = "create"
+	AccountSyncStateCompleted AccountSyncState = "completed"
+	AccountSyncStateFail      AccountSyncState = "fail"
+)
+
 const (
 	ActivityOrderStateCompleted = "completed"
+)
+
+// ActivityResult 抽奖结果存储结构
+type ActivityResult struct {
+	// 用户ID
+	UserID string `json:"u"`
+	// 状态：1-成功，2-兜底积分
+	Status int `json:"s"`
+	// 结果：奖品ID或积分值
+	Result string `json:"r"`
+	// 时间戳：中奖时间戳
+	Timestamp int64 `json:"t"`
+}
+
+// ActivityResultStatus 抽奖结果状态常量
+const (
+	ActivityResultStatusSuccess = 1 // 抽奖成功
+	ActivityResultStatusCredit  = 2 // 兜底积分
+)
+
+// ActivityResultPointsPrefix 积分结果标识前缀
+const (
+	ActivityResultPointsPrefix = "POINTS" // 积分标识前缀
 )

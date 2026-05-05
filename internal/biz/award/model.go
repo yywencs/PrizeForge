@@ -2,6 +2,10 @@ package award
 
 import "time"
 
+const (
+	SendAwardTopic = "send_award"
+)
+
 // SendAwardMessage 奖品消息载体
 type SendAwardMessage struct {
 	// UserID 用户ID

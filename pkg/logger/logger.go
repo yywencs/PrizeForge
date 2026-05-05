@@ -1,6 +1,9 @@
 package logger
 
 import (
+	"fmt"
+
+	"github.com/go-kratos/kratos/v2/log"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"gopkg.in/natefinch/lumberjack.v2"
@@ -15,6 +18,7 @@ type Config struct {
 	MaxBackups int
 	MaxAge     int    // Days
 	Level      string // "debug", "info", "error"
+	Compress   bool
 }
 
 // Init 初始化全局 Logger
@@ -25,7 +29,7 @@ func Init(cfg Config) {
 		MaxSize:    cfg.MaxSize,
 		MaxBackups: cfg.MaxBackups,
 		MaxAge:     cfg.MaxAge,
-		Compress:   true, // 默认开启压缩
+		Compress:   cfg.Compress,
 	})
 
 	// 2. 配置 Encoder
@@ -62,4 +66,69 @@ func parseLevel(lvl string) zapcore.Level {
 	default:
 		return zap.InfoLevel
 	}
+}
+
+// KratosLogger 适配器
+type KratosLogger struct {
+	log *zap.Logger
+}
+
+func NewKratosLogger(z *zap.Logger) log.Logger {
+	return &KratosLogger{log: z}
+}
+
+func (l *KratosLogger) Log(level log.Level, keyvals ...interface{}) error {
+	if len(keyvals) == 0 || len(keyvals)%2 != 0 {
+		l.log.Warn(fmt.Sprint("Keyvalues must appear in pairs: ", keyvals))
+		return nil
+	}
+
+	var data []zap.Field
+	for i := 0; i < len(keyvals); i += 2 {
+		data = append(data, zap.Any(fmt.Sprint(keyvals[i]), keyvals[i+1]))
+	}
+
+	switch level {
+	case log.LevelDebug:
+		l.log.Debug("", data...)
+	case log.LevelInfo:
+		l.log.Info("", data...)
+	case log.LevelWarn:
+		l.log.Warn("", data...)
+	case log.LevelError:
+		l.log.Error("", data...)
+	case log.LevelFatal:
+		l.log.Fatal("", data...)
+	}
+	return nil
+}
+
+// ---------------- Helper functions to replace slog ----------------
+
+func Info(msg string, args ...interface{}) {
+	Log.Sugar().Infow(msg, args...)
+}
+
+func Warn(msg string, args ...interface{}) {
+	Log.Sugar().Warnw(msg, args...)
+}
+
+func Error(msg string, args ...interface{}) {
+	Log.Sugar().Errorw(msg, args...)
+}
+
+func Debug(msg string, args ...interface{}) {
+	Log.Sugar().Debugw(msg, args...)
+}
+
+func InfoContext(ctx interface{}, msg string, args ...interface{}) {
+	Log.Sugar().Infow(msg, args...)
+}
+
+func WarnContext(ctx interface{}, msg string, args ...interface{}) {
+	Log.Sugar().Warnw(msg, args...)
+}
+
+func ErrorContext(ctx interface{}, msg string, args ...interface{}) {
+	Log.Sugar().Errorw(msg, args...)
 }

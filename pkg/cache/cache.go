@@ -45,6 +45,7 @@ type rediser interface {
 	BLPop(ctx context.Context, timeout time.Duration, keys ...string) *redis.StringSliceCmd
 	Expire(ctx context.Context, key string, expiration time.Duration) *redis.BoolCmd
 	Pipeline() redis.Pipeliner
+	Eval(ctx context.Context, script string, keys []string, args ...interface{}) *redis.Cmd
 }
 
 type Item struct {
@@ -300,6 +301,11 @@ func (cd *Cache) getSetItemBytesOnce(item *Item) (b []byte, cached bool, err err
 			return b, nil
 		}
 
+		// 如果是因为 Context 取消或超时导致的错误，直接返回，不再执行后续数据库查询
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return nil, err
+		}
+
 		b, ok, err := cd.set(item)
 		if ok {
 			return b, nil
@@ -500,6 +506,14 @@ func (cd *Cache) HGet(ctx context.Context, key string, field string) (string, er
 	// 直接透传调用底层 HGet
 	cmd := cd.opt.Redis.HGet(ctx, key, field)
 	return cmd.Result()
+}
+
+func (cd *Cache) Expire(ctx context.Context, key string, expiration time.Duration) (bool, error) {
+	return cd.opt.Redis.Expire(ctx, key, expiration).Result()
+}
+
+func (cd *Cache) Eval(ctx context.Context, script string, keys []string, args ...interface{}) (interface{}, error) {
+	return cd.opt.Redis.Eval(ctx, script, keys, args...).Result()
 }
 
 //------------------------------------------------------------------------------

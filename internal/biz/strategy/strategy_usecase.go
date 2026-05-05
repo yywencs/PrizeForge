@@ -1,8 +1,8 @@
 package strategy
 
 import (
+	"big-market-kratos/pkg/logger"
 	"context"
-	"log/slog"
 )
 
 type StrategyUsecase struct {
@@ -32,7 +32,7 @@ func (s *StrategyUsecase) PerformRaffle(ctx context.Context, factor *RaffleFacto
 		return nil, err
 	}
 
-	slog.Info("抽奖逻辑链执行完成",
+	logger.Info("抽奖逻辑链执行完成",
 		"strategyID", factor.StrategyID,
 		"userID", factor.UserID,
 		"awardID", strategyAwardBefore.AwardID,
@@ -44,7 +44,7 @@ func (s *StrategyUsecase) PerformRaffle(ctx context.Context, factor *RaffleFacto
 		return s.buildRaffleAward(ctx, factor.StrategyID, strategyAwardBefore.AwardID)
 	}
 
-	// 3. 执行抽奖规则树（后置规则：随机抽奖等）
+	// 3. 执行抽奖规则树
 	strategyAwardAfter, err := s.raffle.raffleRuleTree(ctx, factor.UserID, factor.StrategyID, strategyAwardBefore.AwardID)
 	if err != nil {
 		return nil, err
@@ -71,6 +71,14 @@ func (s *StrategyUsecase) QueryAwardRuleWeightByActivityId(ctx context.Context, 
 // buildRaffleAward 构建返回结果
 func (s *StrategyUsecase) UpdateStrategyAwardStock(ctx context.Context, strategyID int64, awardID int64) error {
 	return s.repo.UpdateStrategyAwardStock(ctx, strategyID, awardID)
+}
+
+func (s *StrategyUsecase) AssembleLotteryStrategyByActivityId(ctx context.Context, activityID int64) (bool, error) {
+	strategyID, err := s.repo.QueryStrategyIdByActivityId(ctx, activityID)
+	if err != nil {
+		return false, err
+	}
+	return s.AssembleLotteryStrategy(ctx, strategyID)
 }
 
 // buildRaffleAward 构建返回结果

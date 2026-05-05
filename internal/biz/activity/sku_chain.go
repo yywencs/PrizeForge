@@ -1,8 +1,8 @@
 package activity
 
 import (
+	"big-market-kratos/pkg/logger"
 	"context"
-	"log/slog"
 	"time"
 )
 
@@ -15,7 +15,7 @@ func newBaseActionChain() ActionChain {
 }
 
 func (c *BaseActionChain) Action(ctx context.Context, activitySku *ActivitySku, activity *Activity, activityCount *ActivityCount) (bool, error) {
-	slog.Info("活动责任链-基础信息【有效期、状态】校验开始。")
+	logger.Info("活动责任链-基础信息【有效期、状态】校验开始。")
 
 	if activity.State != ActivityStateOpen {
 		return false, ErrActivityStateError
@@ -82,15 +82,15 @@ func newSkuStockActionChain(repo Repo) ActionChain {
 }
 
 func (c *SkuStockActionChain) Action(ctx context.Context, activitySku *ActivitySku, activity *Activity, activityCount *ActivityCount) (bool, error) {
-	slog.Info("活动责任链-商品库存处理【校验&扣减】开始。")
+	logger.Info("活动责任链-商品库存处理【校验&扣减】开始。")
 
-	success, err := c.repo.SubtractionActivitySkuStock(ctx, activitySku.Sku, activity.EndDateTime)
+	result, err := c.repo.SubtractionActivitySkuStock(ctx, activitySku.Sku, activity.ActivityID, "user_id", activity.EndDateTime)
 	if err != nil {
 		return false, err
 	}
 
-	if success {
-		slog.Info("活动责任链-商品库存处理【校验&扣减】成功。",
+	if result.Status == ActivityResultStatusSuccess {
+		logger.Info("活动责任链-商品库存处理【校验&扣减】成功。",
 			"sku", activitySku.Sku,
 			"activityID", activity.ActivityID,
 		)

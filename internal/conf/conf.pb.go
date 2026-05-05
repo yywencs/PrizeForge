@@ -29,7 +29,7 @@ type Bootstrap struct {
 	Data          *Data                  `protobuf:"bytes,3,opt,name=data,proto3" json:"data,omitempty"`
 	Asynq         *Asynq                 `protobuf:"bytes,4,opt,name=asynq,proto3" json:"asynq,omitempty"`
 	Log           *Log                   `protobuf:"bytes,5,opt,name=log,proto3" json:"log,omitempty"`
-	Dcc           *DccConfig             `protobuf:"bytes,6,opt,name=dcc,proto3" json:"dcc,omitempty"`
+	Dcc           *Dcc                   `protobuf:"bytes,6,opt,name=dcc,proto3" json:"dcc,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -99,7 +99,7 @@ func (x *Bootstrap) GetLog() *Log {
 	return nil
 }
 
-func (x *Bootstrap) GetDcc() *DccConfig {
+func (x *Bootstrap) GetDcc() *Dcc {
 	if x != nil {
 		return x.Dcc
 	}
@@ -354,28 +354,29 @@ func (x *Etcd) GetTimeout() *durationpb.Duration {
 	return nil
 }
 
-type DccConfig struct {
+type Dcc struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	EnableDegrade bool                   `protobuf:"varint,1,opt,name=enable_degrade,json=enableDegrade,proto3" json:"enable_degrade,omitempty"` // 降级开关
-	BlackList     string                 `protobuf:"bytes,2,opt,name=black_list,json=blackList,proto3" json:"black_list,omitempty"`              // 黑名单 (对应你 yaml 里的字符串)
+	RateLimit     int32                  `protobuf:"varint,1,opt,name=rate_limit,json=rateLimit,proto3" json:"rate_limit,omitempty"`             // 限流阈值
+	EnableDegrade bool                   `protobuf:"varint,2,opt,name=enable_degrade,json=enableDegrade,proto3" json:"enable_degrade,omitempty"` // 降级开关
+	BlackList     string                 `protobuf:"bytes,3,opt,name=black_list,json=blackList,proto3" json:"black_list,omitempty"`              // 黑名单 (对应你 yaml 里的字符串)
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *DccConfig) Reset() {
-	*x = DccConfig{}
+func (x *Dcc) Reset() {
+	*x = Dcc{}
 	mi := &file_conf_conf_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *DccConfig) String() string {
+func (x *Dcc) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*DccConfig) ProtoMessage() {}
+func (*Dcc) ProtoMessage() {}
 
-func (x *DccConfig) ProtoReflect() protoreflect.Message {
+func (x *Dcc) ProtoReflect() protoreflect.Message {
 	mi := &file_conf_conf_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -387,19 +388,26 @@ func (x *DccConfig) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use DccConfig.ProtoReflect.Descriptor instead.
-func (*DccConfig) Descriptor() ([]byte, []int) {
+// Deprecated: Use Dcc.ProtoReflect.Descriptor instead.
+func (*Dcc) Descriptor() ([]byte, []int) {
 	return file_conf_conf_proto_rawDescGZIP(), []int{5}
 }
 
-func (x *DccConfig) GetEnableDegrade() bool {
+func (x *Dcc) GetRateLimit() int32 {
+	if x != nil {
+		return x.RateLimit
+	}
+	return 0
+}
+
+func (x *Dcc) GetEnableDegrade() bool {
 	if x != nil {
 		return x.EnableDegrade
 	}
 	return false
 }
 
-func (x *DccConfig) GetBlackList() string {
+func (x *Dcc) GetBlackList() string {
 	if x != nil {
 		return x.BlackList
 	}
@@ -1155,14 +1163,14 @@ var File_conf_conf_proto protoreflect.FileDescriptor
 const file_conf_conf_proto_rawDesc = "" +
 	"\n" +
 	"\x0fconf/conf.proto\x12\n" +
-	"kratos.api\x1a\x1egoogle/protobuf/duration.proto\"\x84\x02\n" +
+	"kratos.api\x1a\x1egoogle/protobuf/duration.proto\"\xfe\x01\n" +
 	"\tBootstrap\x12*\n" +
 	"\x06server\x18\x01 \x01(\v2\x12.kratos.api.ServerR\x06server\x120\n" +
 	"\brabbitmq\x18\x02 \x01(\v2\x14.kratos.api.RabbitMQR\brabbitmq\x12$\n" +
 	"\x04data\x18\x03 \x01(\v2\x10.kratos.api.DataR\x04data\x12'\n" +
 	"\x05asynq\x18\x04 \x01(\v2\x11.kratos.api.AsynqR\x05asynq\x12!\n" +
-	"\x03log\x18\x05 \x01(\v2\x0f.kratos.api.LogR\x03log\x12'\n" +
-	"\x03dcc\x18\x06 \x01(\v2\x15.kratos.api.DccConfigR\x03dcc\"\xb8\x02\n" +
+	"\x03log\x18\x05 \x01(\v2\x0f.kratos.api.LogR\x03log\x12!\n" +
+	"\x03dcc\x18\x06 \x01(\v2\x0f.kratos.api.DccR\x03dcc\"\xb8\x02\n" +
 	"\x06Server\x12+\n" +
 	"\x04http\x18\x01 \x01(\v2\x17.kratos.api.Server.HTTPR\x04http\x12+\n" +
 	"\x04grpc\x18\x02 \x01(\v2\x17.kratos.api.Server.GRPCR\x04grpc\x1ai\n" +
@@ -1219,11 +1227,13 @@ const file_conf_conf_proto_rawDesc = "" +
 	"keep_alive\x18\v \x01(\bR\tkeepAlive\"Y\n" +
 	"\x04Etcd\x12\x1c\n" +
 	"\tendpoints\x18\x01 \x03(\tR\tendpoints\x123\n" +
-	"\atimeout\x18\x02 \x01(\v2\x19.google.protobuf.DurationR\atimeout\"Q\n" +
-	"\tDccConfig\x12%\n" +
-	"\x0eenable_degrade\x18\x01 \x01(\bR\renableDegrade\x12\x1d\n" +
+	"\atimeout\x18\x02 \x01(\v2\x19.google.protobuf.DurationR\atimeout\"j\n" +
+	"\x03Dcc\x12\x1d\n" +
 	"\n" +
-	"black_list\x18\x02 \x01(\tR\tblackList\"\xb9\x03\n" +
+	"rate_limit\x18\x01 \x01(\x05R\trateLimit\x12%\n" +
+	"\x0eenable_degrade\x18\x02 \x01(\bR\renableDegrade\x12\x1d\n" +
+	"\n" +
+	"black_list\x18\x03 \x01(\tR\tblackList\"\xb9\x03\n" +
 	"\x05Asynq\x12-\n" +
 	"\x05redis\x18\x01 \x01(\v2\x17.kratos.api.Asynq.RedisR\x05redis\x12 \n" +
 	"\vconcurrency\x18\x02 \x01(\x05R\vconcurrency\x1a\xde\x02\n" +
@@ -1269,7 +1279,7 @@ var file_conf_conf_proto_goTypes = []any{
 	(*RabbitMQ)(nil),                 // 2: kratos.api.RabbitMQ
 	(*Data)(nil),                     // 3: kratos.api.Data
 	(*Etcd)(nil),                     // 4: kratos.api.Etcd
-	(*DccConfig)(nil),                // 5: kratos.api.DccConfig
+	(*Dcc)(nil),                      // 5: kratos.api.Dcc
 	(*Asynq)(nil),                    // 6: kratos.api.Asynq
 	(*Log)(nil),                      // 7: kratos.api.Log
 	(*Server_HTTP)(nil),              // 8: kratos.api.Server.HTTP
@@ -1288,7 +1298,7 @@ var file_conf_conf_proto_depIdxs = []int32{
 	3,  // 2: kratos.api.Bootstrap.data:type_name -> kratos.api.Data
 	6,  // 3: kratos.api.Bootstrap.asynq:type_name -> kratos.api.Asynq
 	7,  // 4: kratos.api.Bootstrap.log:type_name -> kratos.api.Log
-	5,  // 5: kratos.api.Bootstrap.dcc:type_name -> kratos.api.DccConfig
+	5,  // 5: kratos.api.Bootstrap.dcc:type_name -> kratos.api.Dcc
 	8,  // 6: kratos.api.Server.http:type_name -> kratos.api.Server.HTTP
 	9,  // 7: kratos.api.Server.grpc:type_name -> kratos.api.Server.GRPC
 	10, // 8: kratos.api.RabbitMQ.listener:type_name -> kratos.api.RabbitMQ.Listener

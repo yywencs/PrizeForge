@@ -1,9 +1,9 @@
 package activity
 
 import (
+	"big-market-kratos/pkg/logger"
 	"context"
 	"fmt"
-	"log/slog"
 	"time"
 )
 
@@ -26,7 +26,7 @@ func (s *StockManager) assembleActivitySkuByActivityId(ctx context.Context, acti
 		return false, err
 	}
 	if activitySkus == nil {
-		slog.Info("assembleActivitySkuByActivityId: activitySkus is nil", "activityID", activityID)
+		logger.Info("assembleActivitySkuByActivityId: activitySkus is nil", "activityID", activityID)
 		return false, nil
 	}
 
@@ -37,7 +37,7 @@ func (s *StockManager) assembleActivitySkuByActivityId(ctx context.Context, acti
 			return false, err
 		}
 		if activityCount == nil {
-			slog.Info("assembleActivitySkuByActivityId: activityCount is nil", "activityCountID", activitySku.ActivityCountID)
+			logger.Info("assembleActivitySkuByActivityId: activityCount is nil", "activityCountID", activitySku.ActivityCountID)
 			return false, nil
 		}
 	}
@@ -47,7 +47,7 @@ func (s *StockManager) assembleActivitySkuByActivityId(ctx context.Context, acti
 		return false, err
 	}
 	if activity == nil {
-		slog.Info("assembleActivitySkuByActivityId: activity is nil", "activityID", activityID)
+		logger.Info("assembleActivitySkuByActivityId: activity is nil", "activityID", activityID)
 		return false, nil
 	}
 
@@ -96,8 +96,8 @@ func (s *StockManager) cacheActivitySkuStockCount(ctx context.Context, skuID int
 	return nil
 }
 
-func (s *StockManager) subtractionActivitySkuStock(ctx context.Context, skuID int64, endDateTime time.Time) (bool, error) {
-	return s.repo.SubtractionActivitySkuStock(ctx, skuID, endDateTime)
+func (s *StockManager) subtractionActivitySkuStock(ctx context.Context, skuID int64, activityID int64, userID string, endDateTime time.Time) (*ActivityResult, error) {
+	return s.repo.SubtractionActivitySkuStock(ctx, skuID, activityID, userID, endDateTime)
 }
 
 func getActivitySkuStockCountKey(sku int64) string {

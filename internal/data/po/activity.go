@@ -122,16 +122,17 @@ func (RaffleActivityAccountMonth) TableName() string {
 }
 
 type UserRaffleOrder struct {
-	ID           uint64    `gorm:"column:id;primaryKey;autoIncrement;comment:自增ID"`
-	UserID       string    `gorm:"column:user_id;type:varchar(32);not null;comment:用户ID"`
-	ActivityID   int64     `gorm:"column:activity_id;not null;comment:活动ID"`
-	ActivityName string    `gorm:"column:activity_name;type:varchar(64);not null;comment:活动名称"`
-	StrategyID   int64     `gorm:"column:strategy_id;not null;comment:抽奖策略ID"`
-	OrderID      string    `gorm:"column:order_id;type:varchar(12);not null;comment:订单ID"`
-	OrderTime    time.Time `gorm:"column:order_time;type:datetime;not null;comment:下单时间"`
-	OrderState   string    `gorm:"column:order_state;type:varchar(16);not null;default:create;comment:订单状态；create-创建、used-已使用、cancel-已作废"`
-	CreateTime   time.Time `gorm:"column:create_time;type:datetime;not null;autoCreateTime;comment:创建时间"`
-	UpdateTime   time.Time `gorm:"column:update_time;type:datetime;not null;autoUpdateTime;comment:更新时间"`
+	ID               uint64    `gorm:"column:id;primaryKey;autoIncrement;comment:自增ID"`
+	UserID           string    `gorm:"column:user_id;type:varchar(32);not null;comment:用户ID"`
+	ActivityID       int64     `gorm:"column:activity_id;not null;comment:活动ID"`
+	ActivityName     string    `gorm:"column:activity_name;type:varchar(64);not null;comment:活动名称"`
+	StrategyID       int64     `gorm:"column:strategy_id;not null;comment:抽奖策略ID"`
+	OrderID          string    `gorm:"column:order_id;type:varchar(12);not null;comment:订单ID"`
+	OrderTime        time.Time `gorm:"column:order_time;type:datetime;not null;comment:下单时间"`
+	OrderState       string    `gorm:"column:order_state;type:varchar(16);not null;default:create;comment:订单状态；create-创建、used-已使用、cancel-已作废"`
+	AccountSyncState string    `gorm:"column:account_sync_state;type:varchar(16);not null;default:create;comment:额度账同步状态；create-待同步、completed-已同步、fail-同步失败"`
+	CreateTime       time.Time `gorm:"column:create_time;type:datetime;not null;autoCreateTime;comment:创建时间"`
+	UpdateTime       time.Time `gorm:"column:update_time;type:datetime;not null;autoUpdateTime;comment:更新时间"`
 }
 
 func (UserRaffleOrder) TableName() string {

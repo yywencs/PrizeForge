@@ -3,8 +3,8 @@ package job
 import (
 	taskSvc "big-market-kratos/internal/biz/task"
 	"big-market-kratos/internal/conf"
+	"big-market-kratos/pkg/logger"
 	"context"
-	"log/slog"
 	"sync"
 
 	"github.com/hibiken/asynq"
@@ -34,8 +34,6 @@ func (j *SendAwardMessage) ProcessTask(ctx context.Context, task *asynq.Task) er
 			// 务必将 t 作为参数传入，避免闭包引用同一个变量
 			go func(taskItem *taskSvc.Task) {
 				defer wg.Done()
-				// 执行你定义的 dispatchSingleTask
-				// 内部已经处理了 UpdateTaskSendMessageFail，所以这里不需要返回 error
 				j.dispatchSingleTask(ctx, taskItem)
 			}(t)
 		}
@@ -51,7 +49,7 @@ func (j *SendAwardMessage) dispatchSingleTask(ctx context.Context, t *taskSvc.Ta
 
 	if err != nil {
 		// 发送失败：更新状态为 Fail
-		slog.Warn("Send message failed, updating status to fail", "taskID", t.MessageID)
+		logger.Warn("Send message failed, updating status to fail", "taskID", t.MessageID)
 		j.taskSvc.UpdateTaskSendMessageFail(ctx, t.UserID, t.MessageID)
 		return
 	}
@@ -59,7 +57,7 @@ func (j *SendAwardMessage) dispatchSingleTask(ctx context.Context, t *taskSvc.Ta
 	// 发送成功：尝试更新状态为 Completed
 	if err := j.taskSvc.UpdateTaskSendMessageCompleted(ctx, t.UserID, t.MessageID); err != nil {
 		// 更新成功状态失败：依然标记为 Fail，交给下次扫描重试（保证幂等）
-		slog.Error("Update completed status failed", "taskID", t.MessageID, "err", err)
+		logger.Error("Update completed status failed", "taskID", t.MessageID, "err", err)
 		j.taskSvc.UpdateTaskSendMessageFail(ctx, t.UserID, t.MessageID)
 		return
 	}
