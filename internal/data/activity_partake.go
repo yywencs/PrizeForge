@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 const pendingRaffleOrderTTL = 30 * time.Minute
@@ -238,7 +239,7 @@ func (r *Repository) SaveLiteUserRaffleOrder(ctx context.Context, aggregate *act
 	}
 
 	baseEvent := rabbitmq.NewBaseEvent(aggregate)
-	taskPO, taskErr := convertToOrderTaskPO(aggregate.UserID, baseEvent.ID, aggregate)
+	taskPO, taskErr := buildSaveOrderTaskPO(aggregate.UserID, baseEvent.ID, aggregate)
 	if taskErr != nil {
 		compensateErr := r.compensatePendingRaffleOrder(ctx, order)
 		if compensateErr != nil {
@@ -315,39 +316,91 @@ func (r *Repository) AsyncSaveCreatePartakeOrderAggregate(ctx context.Context, c
 func (r *Repository) SaveCreatePartakeOrderAggregate(ctx context.Context, createPartakeOrderAggregate *activity.CreatePartakeOrder) error {
 	// 1. 获取 DB 和 分表后缀
 	userID := createPartakeOrderAggregate.UserID
-	activityID := createPartakeOrderAggregate.ActivityID
-	db, _ := r.routerDB.DBStrategy(userID)
+	if createPartakeOrderAggregate.UserRaffleOrder == nil || createPartakeOrderAggregate.UserRaffleOrder.OrderID == "" {
+		return activity.ErrInvalidParams
+	}
+
+	orderID := createPartakeOrderAggregate.UserRaffleOrder.OrderID
+	db, tableSuffix := r.routerDB.DBStrategy(userID)
 	if db == nil {
 		return activity.ErrDBRouterError
 	}
 
 	// 2. 执行事务
 	return db.Transaction(func(tx *gorm.DB) error {
+		orderTable := "user_raffle_order_" + tableSuffix
+		var orderPO po.UserRaffleOrder
+		if err := tx.WithContext(ctx).
+			Table(orderTable).
+			Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("user_id = ? AND order_id = ?", userID, orderID).
+			First(&orderPO).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return activity.ErrRecordNotFound
+			}
+			return err
+		}
+
+		if orderPO.AccountSyncState == string(activity.AccountSyncStateCompleted) {
+			return nil
+		}
+
+		activityID := orderPO.ActivityID
+		orderMonth := orderPO.OrderTime.Format("2006-01")
+		orderDay := orderPO.OrderTime.Format("2006-01-02")
+		now := time.Now()
+
+		var accountPO po.RaffleActivityAccount
+		if err := tx.WithContext(ctx).
+			Table("raffle_activity_account").
+			Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("user_id = ? AND activity_id = ?", userID, activityID).
+			First(&accountPO).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return activity.ErrRecordNotFound
+			}
+			return err
+		}
+
+		if accountPO.TotalCountSurplus <= 0 {
+			return activity.ErrActivityQuotaError
+		}
+		if accountPO.MonthCountSurplus <= 0 {
+			return activity.ErrActivityAccountMonthCountSurplusNotEnough
+		}
+		if accountPO.DayCountSurplus <= 0 {
+			return activity.ErrActivityAccountDayCountSurplusNotEnough
+		}
+
 		// 2.1 更新总账户额度
-		// update raffle_activity_account set total_count_surplus = total_count_surplus - 1 where user_id = ? and activity_id = ? and total_count_surplus > 0
 		res := tx.Table("raffle_activity_account").
-			Where("user_id = ? AND activity_id = ? AND total_count_surplus > 0", userID, activityID).
+			Where("user_id = ? AND activity_id = ?", userID, activityID).
 			Updates(map[string]interface{}{
 				"total_count_surplus": gorm.Expr("total_count_surplus - 1"),
 				"day_count_surplus":   gorm.Expr("day_count_surplus - 1"),
 				"month_count_surplus": gorm.Expr("month_count_surplus - 1"),
-				"update_time":         time.Now(),
+				"update_time":         now,
 			})
 		if res.Error != nil {
 			return res.Error
 		}
-		if res.RowsAffected == 0 {
-			return activity.ErrActivityQuotaError
-		}
-
 		// 2.2 创建或更新月账户
-		if createPartakeOrderAggregate.IsExistAccountMonth {
+		var monthPO po.RaffleActivityAccountMonth
+		err := tx.WithContext(ctx).
+			Table("raffle_activity_account_month").
+			Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("user_id = ? AND activity_id = ? AND month = ?", userID, activityID, orderMonth).
+			First(&monthPO).Error
+		if err == nil {
+			if monthPO.MonthCountSurplus <= 0 {
+				return activity.ErrActivityAccountMonthCountSurplusNotEnough
+			}
 			resMonth := tx.Table("raffle_activity_account_month").
-				Where("user_id = ? AND activity_id = ? AND month = ? AND month_count_surplus > 0",
-					userID, activityID, createPartakeOrderAggregate.ActivityAccountMonth.Month).
+				Where("user_id = ? AND activity_id = ? AND month = ?",
+					userID, activityID, orderMonth).
 				Updates(map[string]interface{}{
 					"month_count_surplus": gorm.Expr("month_count_surplus - 1"),
-					"update_time":         time.Now(),
+					"update_time":         now,
 				})
 			if resMonth.Error != nil {
 				return resMonth.Error
@@ -355,41 +408,41 @@ func (r *Repository) SaveCreatePartakeOrderAggregate(ctx context.Context, create
 			if resMonth.RowsAffected == 0 {
 				return activity.ErrActivityAccountMonthCountSurplusNotEnough
 			}
-		} else {
-			// 插入月账户
-			monthEntity := createPartakeOrderAggregate.ActivityAccountMonth
-			monthPO := po.RaffleActivityAccountMonth{
-				UserID:            monthEntity.UserID,
-				ActivityID:        monthEntity.ActivityID,
-				Month:             monthEntity.Month,
-				MonthCount:        monthEntity.MonthCount,
-				MonthCountSurplus: monthEntity.MonthCountSurplus - 1,
+		} else if errors.Is(err, gorm.ErrRecordNotFound) {
+			monthPO = po.RaffleActivityAccountMonth{
+				UserID:            userID,
+				ActivityID:        activityID,
+				Month:             orderMonth,
+				MonthCount:        accountPO.MonthCount,
+				MonthCountSurplus: accountPO.MonthCountSurplus - 1,
 			}
-			if err := tx.Table("raffle_activity_account_month").Create(&monthPO).Error; err != nil {
-				if errors.Is(err, gorm.ErrDuplicatedKey) {
+			if createMonthErr := tx.Table("raffle_activity_account_month").Create(&monthPO).Error; createMonthErr != nil {
+				if errors.Is(createMonthErr, gorm.ErrDuplicatedKey) {
 					return activity.ErrDBIndexDuplicate
 				}
-				return err
+				return createMonthErr
 			}
-			// 更新总账户月镜像
-			if err := tx.Table("raffle_activity_account").
-				Where("user_id = ? AND activity_id = ?", userID, activityID).
-				Updates(map[string]interface{}{
-					"month_count_surplus": monthEntity.MonthCountSurplus - 1,
-					"update_time":         time.Now(),
-				}).Error; err != nil {
-				return err
-			}
+		} else {
+			return err
 		}
 
 		// 2.3 创建或更新日账户
-		if createPartakeOrderAggregate.IsExistAccountDay {
+		var dayPO po.RaffleActivityAccountDay
+		err = tx.WithContext(ctx).
+			Table("raffle_activity_account_day").
+			Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("user_id = ? AND activity_id = ? AND day = ?", userID, activityID, orderDay).
+			First(&dayPO).Error
+		if err == nil {
+			if dayPO.DayCountSurplus <= 0 {
+				return activity.ErrActivityAccountDayCountSurplusNotEnough
+			}
 			resDay := tx.Table("raffle_activity_account_day").
-				Where("user_id = ? AND activity_id = ? AND day = ? AND day_count_surplus > 0",
-					userID, activityID, createPartakeOrderAggregate.ActivityAccountDay.Day).
+				Where("user_id = ? AND activity_id = ? AND day = ?",
+					userID, activityID, orderDay).
 				Updates(map[string]interface{}{
 					"day_count_surplus": gorm.Expr("day_count_surplus - 1"),
-					"update_time":       time.Now(),
+					"update_time":       now,
 				})
 			if resDay.Error != nil {
 				return resDay.Error
@@ -397,31 +450,31 @@ func (r *Repository) SaveCreatePartakeOrderAggregate(ctx context.Context, create
 			if resDay.RowsAffected == 0 {
 				return activity.ErrActivityAccountDayCountSurplusNotEnough
 			}
-		} else {
-			// 插入日账户
-			dayEntity := createPartakeOrderAggregate.ActivityAccountDay
-			dayPO := po.RaffleActivityAccountDay{
-				UserID:          dayEntity.UserID,
-				ActivityID:      dayEntity.ActivityID,
-				Day:             dayEntity.Day,
-				DayCount:        dayEntity.DayCount,
-				DayCountSurplus: dayEntity.DayCountSurplus - 1,
+		} else if errors.Is(err, gorm.ErrRecordNotFound) {
+			dayPO = po.RaffleActivityAccountDay{
+				UserID:          userID,
+				ActivityID:      activityID,
+				Day:             orderDay,
+				DayCount:        accountPO.DayCount,
+				DayCountSurplus: accountPO.DayCountSurplus - 1,
 			}
-			if err := tx.Table("raffle_activity_account_day").Create(&dayPO).Error; err != nil {
-				if errors.Is(err, gorm.ErrDuplicatedKey) {
+			if createDayErr := tx.Table("raffle_activity_account_day").Create(&dayPO).Error; createDayErr != nil {
+				if errors.Is(createDayErr, gorm.ErrDuplicatedKey) {
 					return activity.ErrDBIndexDuplicate
 				}
-				return err
+				return createDayErr
 			}
-			// 更新总账户日镜像
-			if err := tx.Table("raffle_activity_account").
-				Where("user_id = ? AND activity_id = ?", userID, activityID).
-				Updates(map[string]interface{}{
-					"day_count_surplus": dayEntity.DayCountSurplus - 1,
-					"update_time":       time.Now(),
-				}).Error; err != nil {
-				return err
-			}
+		} else {
+			return err
+		}
+
+		if err := tx.Table(orderTable).
+			Where("user_id = ? AND order_id = ?", userID, orderID).
+			Updates(map[string]interface{}{
+				"account_sync_state": string(activity.AccountSyncStateCompleted),
+				"update_time":        now,
+			}).Error; err != nil {
+			return err
 		}
 
 		return nil
@@ -486,15 +539,20 @@ func (r *Repository) compensatePendingRaffleOrder(ctx context.Context, order *ac
 	return err
 }
 
-func convertToOrderTaskPO(userID, messageID string, aggregate *activity.CreatePartakeOrder) (*po.Task, error) {
-	messageBytes, err := json.Marshal(aggregate)
+func buildSaveOrderTaskPO(userID, messageID string, aggregate *activity.CreatePartakeOrder) (*po.Task, error) {
+	message := activity.SaveOrderTaskMessage{
+		UserID:  aggregate.UserID,
+		OrderID: aggregate.UserRaffleOrder.OrderID,
+	}
+
+	messageBytes, err := json.Marshal(message)
 	if err != nil {
 		return nil, err
 	}
 
 	return &po.Task{
 		UserID:     userID,
-		Topic:      "save_order_record",
+		Topic:      activity.SaveOrderRecordTopic,
 		MessageID:  messageID,
 		Message:    string(messageBytes),
 		State:      "create",

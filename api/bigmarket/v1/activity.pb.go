@@ -542,6 +542,102 @@ func (x *QueryUserActivityAccountReply) GetMonthCountSurplus() int64 {
 	return 0
 }
 
+type LoadUserActivityAccountRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	UserId        string                 `protobuf:"bytes,1,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
+	ActivityId    int64                  `protobuf:"varint,2,opt,name=activity_id,json=activityId,proto3" json:"activity_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *LoadUserActivityAccountRequest) Reset() {
+	*x = LoadUserActivityAccountRequest{}
+	mi := &file_bigmarket_v1_activity_proto_msgTypes[10]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *LoadUserActivityAccountRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*LoadUserActivityAccountRequest) ProtoMessage() {}
+
+func (x *LoadUserActivityAccountRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_bigmarket_v1_activity_proto_msgTypes[10]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use LoadUserActivityAccountRequest.ProtoReflect.Descriptor instead.
+func (*LoadUserActivityAccountRequest) Descriptor() ([]byte, []int) {
+	return file_bigmarket_v1_activity_proto_rawDescGZIP(), []int{10}
+}
+
+func (x *LoadUserActivityAccountRequest) GetUserId() string {
+	if x != nil {
+		return x.UserId
+	}
+	return ""
+}
+
+func (x *LoadUserActivityAccountRequest) GetActivityId() int64 {
+	if x != nil {
+		return x.ActivityId
+	}
+	return 0
+}
+
+type LoadUserActivityAccountReply struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Success       bool                   `protobuf:"varint,1,opt,name=success,proto3" json:"success,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *LoadUserActivityAccountReply) Reset() {
+	*x = LoadUserActivityAccountReply{}
+	mi := &file_bigmarket_v1_activity_proto_msgTypes[11]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *LoadUserActivityAccountReply) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*LoadUserActivityAccountReply) ProtoMessage() {}
+
+func (x *LoadUserActivityAccountReply) ProtoReflect() protoreflect.Message {
+	mi := &file_bigmarket_v1_activity_proto_msgTypes[11]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use LoadUserActivityAccountReply.ProtoReflect.Descriptor instead.
+func (*LoadUserActivityAccountReply) Descriptor() ([]byte, []int) {
+	return file_bigmarket_v1_activity_proto_rawDescGZIP(), []int{11}
+}
+
+func (x *LoadUserActivityAccountReply) GetSuccess() bool {
+	if x != nil {
+		return x.Success
+	}
+	return false
+}
+
 var File_bigmarket_v1_activity_proto protoreflect.FileDescriptor
 
 const file_bigmarket_v1_activity_proto_rawDesc = "" +
@@ -584,13 +680,20 @@ const file_bigmarket_v1_activity_proto_rawDesc = "" +
 	"\x11day_count_surplus\x18\x05 \x01(\x03R\x0fdayCountSurplus\x12\x1f\n" +
 	"\vmonth_count\x18\x06 \x01(\x03R\n" +
 	"monthCount\x12.\n" +
-	"\x13month_count_surplus\x18\a \x01(\x03R\x11monthCountSurplus2\xdb\x06\n" +
+	"\x13month_count_surplus\x18\a \x01(\x03R\x11monthCountSurplus\"Z\n" +
+	"\x1eLoadUserActivityAccountRequest\x12\x17\n" +
+	"\auser_id\x18\x01 \x01(\tR\x06userId\x12\x1f\n" +
+	"\vactivity_id\x18\x02 \x01(\x03R\n" +
+	"activityId\"8\n" +
+	"\x1cLoadUserActivityAccountReply\x12\x18\n" +
+	"\asuccess\x18\x01 \x01(\bR\asuccess2\xa1\b\n" +
 	"\bActivity\x12\xa3\x01\n" +
 	"\x14RaffleActivityArmory\x12-.api.bigmarket.v1.RaffleActivityArmoryRequest\x1a+.api.bigmarket.v1.RaffleActivityArmoryReply\"/\x82\xd3\xe4\x93\x02)\x12'/api/v1/strategy/raffle/activity/armory\x12t\n" +
 	"\x04Draw\x12\x1d.api.bigmarket.v1.DrawRequest\x1a\x1b.api.bigmarket.v1.DrawReply\"0\x82\xd3\xe4\x93\x02*:\x01*\"%/api/v1/strategy/raffle/activity/draw\x12\xae\x01\n" +
 	"\x12CalendarSignRebate\x12+.api.bigmarket.v1.CalendarSignRebateRequest\x1a).api.bigmarket.v1.CalendarSignRebateReply\"@\x82\xd3\xe4\x93\x02::\x01*\"5/api/v1/strategy/raffle/activity/calendar_sign_rebate\x12\xb7\x01\n" +
 	"\x14IsCalendarSignRebate\x12-.api.bigmarket.v1.IsCalendarSignRebateRequest\x1a+.api.bigmarket.v1.IsCalendarSignRebateReply\"C\x82\xd3\xe4\x93\x02=:\x01*\"8/api/v1/strategy/raffle/activity/is_calendar_sign_rebate\x12\xc7\x01\n" +
-	"\x18QueryUserActivityAccount\x121.api.bigmarket.v1.QueryUserActivityAccountRequest\x1a/.api.bigmarket.v1.QueryUserActivityAccountReply\"G\x82\xd3\xe4\x93\x02A:\x01*\"</api/v1/strategy/raffle/activity/query_user_activity_accountB;\n" +
+	"\x18QueryUserActivityAccount\x121.api.bigmarket.v1.QueryUserActivityAccountRequest\x1a/.api.bigmarket.v1.QueryUserActivityAccountReply\"G\x82\xd3\xe4\x93\x02A:\x01*\"</api/v1/strategy/raffle/activity/query_user_activity_account\x12\xc3\x01\n" +
+	"\x17LoadUserActivityAccount\x120.api.bigmarket.v1.LoadUserActivityAccountRequest\x1a..api.bigmarket.v1.LoadUserActivityAccountReply\"F\x82\xd3\xe4\x93\x02@:\x01*\";/api/v1/strategy/raffle/activity/load_user_activity_accountB;\n" +
 	"\x10api.bigmarket.v1P\x01Z%big-market-kratos/api/bigmarket/v1;v1b\x06proto3"
 
 var (
@@ -605,7 +708,7 @@ func file_bigmarket_v1_activity_proto_rawDescGZIP() []byte {
 	return file_bigmarket_v1_activity_proto_rawDescData
 }
 
-var file_bigmarket_v1_activity_proto_msgTypes = make([]protoimpl.MessageInfo, 10)
+var file_bigmarket_v1_activity_proto_msgTypes = make([]protoimpl.MessageInfo, 12)
 var file_bigmarket_v1_activity_proto_goTypes = []any{
 	(*RaffleActivityArmoryRequest)(nil),     // 0: api.bigmarket.v1.RaffleActivityArmoryRequest
 	(*RaffleActivityArmoryReply)(nil),       // 1: api.bigmarket.v1.RaffleActivityArmoryReply
@@ -617,23 +720,27 @@ var file_bigmarket_v1_activity_proto_goTypes = []any{
 	(*IsCalendarSignRebateReply)(nil),       // 7: api.bigmarket.v1.IsCalendarSignRebateReply
 	(*QueryUserActivityAccountRequest)(nil), // 8: api.bigmarket.v1.QueryUserActivityAccountRequest
 	(*QueryUserActivityAccountReply)(nil),   // 9: api.bigmarket.v1.QueryUserActivityAccountReply
+	(*LoadUserActivityAccountRequest)(nil),  // 10: api.bigmarket.v1.LoadUserActivityAccountRequest
+	(*LoadUserActivityAccountReply)(nil),    // 11: api.bigmarket.v1.LoadUserActivityAccountReply
 }
 var file_bigmarket_v1_activity_proto_depIdxs = []int32{
-	0, // 0: api.bigmarket.v1.Activity.RaffleActivityArmory:input_type -> api.bigmarket.v1.RaffleActivityArmoryRequest
-	2, // 1: api.bigmarket.v1.Activity.Draw:input_type -> api.bigmarket.v1.DrawRequest
-	4, // 2: api.bigmarket.v1.Activity.CalendarSignRebate:input_type -> api.bigmarket.v1.CalendarSignRebateRequest
-	6, // 3: api.bigmarket.v1.Activity.IsCalendarSignRebate:input_type -> api.bigmarket.v1.IsCalendarSignRebateRequest
-	8, // 4: api.bigmarket.v1.Activity.QueryUserActivityAccount:input_type -> api.bigmarket.v1.QueryUserActivityAccountRequest
-	1, // 5: api.bigmarket.v1.Activity.RaffleActivityArmory:output_type -> api.bigmarket.v1.RaffleActivityArmoryReply
-	3, // 6: api.bigmarket.v1.Activity.Draw:output_type -> api.bigmarket.v1.DrawReply
-	5, // 7: api.bigmarket.v1.Activity.CalendarSignRebate:output_type -> api.bigmarket.v1.CalendarSignRebateReply
-	7, // 8: api.bigmarket.v1.Activity.IsCalendarSignRebate:output_type -> api.bigmarket.v1.IsCalendarSignRebateReply
-	9, // 9: api.bigmarket.v1.Activity.QueryUserActivityAccount:output_type -> api.bigmarket.v1.QueryUserActivityAccountReply
-	5, // [5:10] is the sub-list for method output_type
-	0, // [0:5] is the sub-list for method input_type
-	0, // [0:0] is the sub-list for extension type_name
-	0, // [0:0] is the sub-list for extension extendee
-	0, // [0:0] is the sub-list for field type_name
+	0,  // 0: api.bigmarket.v1.Activity.RaffleActivityArmory:input_type -> api.bigmarket.v1.RaffleActivityArmoryRequest
+	2,  // 1: api.bigmarket.v1.Activity.Draw:input_type -> api.bigmarket.v1.DrawRequest
+	4,  // 2: api.bigmarket.v1.Activity.CalendarSignRebate:input_type -> api.bigmarket.v1.CalendarSignRebateRequest
+	6,  // 3: api.bigmarket.v1.Activity.IsCalendarSignRebate:input_type -> api.bigmarket.v1.IsCalendarSignRebateRequest
+	8,  // 4: api.bigmarket.v1.Activity.QueryUserActivityAccount:input_type -> api.bigmarket.v1.QueryUserActivityAccountRequest
+	10, // 5: api.bigmarket.v1.Activity.LoadUserActivityAccount:input_type -> api.bigmarket.v1.LoadUserActivityAccountRequest
+	1,  // 6: api.bigmarket.v1.Activity.RaffleActivityArmory:output_type -> api.bigmarket.v1.RaffleActivityArmoryReply
+	3,  // 7: api.bigmarket.v1.Activity.Draw:output_type -> api.bigmarket.v1.DrawReply
+	5,  // 8: api.bigmarket.v1.Activity.CalendarSignRebate:output_type -> api.bigmarket.v1.CalendarSignRebateReply
+	7,  // 9: api.bigmarket.v1.Activity.IsCalendarSignRebate:output_type -> api.bigmarket.v1.IsCalendarSignRebateReply
+	9,  // 10: api.bigmarket.v1.Activity.QueryUserActivityAccount:output_type -> api.bigmarket.v1.QueryUserActivityAccountReply
+	11, // 11: api.bigmarket.v1.Activity.LoadUserActivityAccount:output_type -> api.bigmarket.v1.LoadUserActivityAccountReply
+	6,  // [6:12] is the sub-list for method output_type
+	0,  // [0:6] is the sub-list for method input_type
+	0,  // [0:0] is the sub-list for extension type_name
+	0,  // [0:0] is the sub-list for extension extendee
+	0,  // [0:0] is the sub-list for field type_name
 }
 
 func init() { file_bigmarket_v1_activity_proto_init() }
@@ -647,7 +754,7 @@ func file_bigmarket_v1_activity_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_bigmarket_v1_activity_proto_rawDesc), len(file_bigmarket_v1_activity_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   10,
+			NumMessages:   12,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

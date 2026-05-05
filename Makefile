@@ -1,6 +1,9 @@
 GOHOSTOS:=$(shell go env GOHOSTOS)
 GOPATH:=$(shell go env GOPATH)
 VERSION=$(shell git describe --tags --always)
+FRONTEND_DIR=frontend
+BACKEND_CMD=./cmd/big-market-kratos
+BACKEND_CONF=./configs
 
 ifeq ($(GOHOSTOS), windows)
 	#the `find.exe` is different from `find` in bash/shell.
@@ -48,6 +51,26 @@ api:
 # build
 build:
 	mkdir -p bin/ && go build -ldflags "-X main.Version=$(VERSION)" -o ./bin/ ./...
+
+.PHONY: frontend-install
+# install frontend deps
+frontend-install:
+	cd $(FRONTEND_DIR) && npm install
+
+.PHONY: frontend-dev
+# run frontend dev server
+frontend-dev:
+	cd $(FRONTEND_DIR) && npm run dev
+
+.PHONY: backend-dev
+# run backend dev server
+backend-dev:
+	go run $(BACKEND_CMD) -conf $(BACKEND_CONF)
+
+.PHONY: frontend-build
+# build frontend
+frontend-build:
+	cd $(FRONTEND_DIR) && npm run build
 
 .PHONY: generate
 # generate

@@ -50,6 +50,15 @@ service Activity {
       body: "*"
     };
   }
+
+  // 加载单个用户活动账户额度到缓存
+  // 对应: POST /api/v1/raffle/activity/load_user_activity_account
+  rpc LoadUserActivityAccount(LoadUserActivityAccountRequest) returns (LoadUserActivityAccountReply) {
+    option (google.api.http) = {
+      post: "/api/v1/strategy/raffle/activity/load_user_activity_account"
+      body: "*"
+    };
+  }
 }
 
 // --- Request/Reply Definitions ---
@@ -102,4 +111,13 @@ message QueryUserActivityAccountReply {
   int64 day_count_surplus = 5;
   int64 month_count = 6;
   int64 month_count_surplus = 7;
+}
+
+message LoadUserActivityAccountRequest {
+  string user_id = 1;
+  int64 activity_id = 2;
+}
+
+message LoadUserActivityAccountReply {
+  bool success = 1;
 }

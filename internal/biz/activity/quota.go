@@ -107,3 +107,7 @@ func (s *ActivityQuotaUsecase) QueryRaffleActivityAccountDayPartakeCount(ctx con
 func (s *ActivityQuotaUsecase) AssembleActivityAccountByActivityId(ctx context.Context, activityID int64) error {
 	return s.repo.AssembleActivityAccountByActivityId(ctx, activityID)
 }
+
+func (s *ActivityQuotaUsecase) AssembleActivityAccountByUserId(ctx context.Context, userID string, activityID int64) error {
+	return s.repo.AssembleActivityAccountByUserId(ctx, userID, activityID)
+}

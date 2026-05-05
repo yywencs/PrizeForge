@@ -1,22 +1,31 @@
 package job
 
 import (
+	"big-market-kratos/internal/biz/activity"
+	"big-market-kratos/internal/biz/award"
 	taskSvc "big-market-kratos/internal/biz/task"
 	"big-market-kratos/internal/conf"
 	"big-market-kratos/pkg/logger"
 	"context"
+	"encoding/json"
+	"fmt"
 	"sync"
 
 	"github.com/hibiken/asynq"
 )
 
 type SendAwardMessage struct {
-	taskSvc *taskSvc.TaskUsecase
-	dbCount int
+	taskSvc            *taskSvc.TaskUsecase
+	activityPartakeSvc *activity.ActivityPartakeUsecase
+	dbCount            int
 }
 
-func NewSendAwardMessage(taskSvc *taskSvc.TaskUsecase, conf *conf.Data_Mysql) *SendAwardMessage {
-	return &SendAwardMessage{taskSvc: taskSvc, dbCount: int(conf.DbCount)}
+func NewSendAwardMessage(taskSvc *taskSvc.TaskUsecase, activityPartakeSvc *activity.ActivityPartakeUsecase, conf *conf.Data_Mysql) *SendAwardMessage {
+	return &SendAwardMessage{
+		taskSvc:            taskSvc,
+		activityPartakeSvc: activityPartakeSvc,
+		dbCount:            int(conf.DbCount),
+	}
 }
 
 func (j *SendAwardMessage) ProcessTask(ctx context.Context, task *asynq.Task) error {
@@ -44,8 +53,7 @@ func (j *SendAwardMessage) ProcessTask(ctx context.Context, task *asynq.Task) er
 
 // dispatchSingleTask 封装单条任务的处理逻辑，保证状态闭环
 func (j *SendAwardMessage) dispatchSingleTask(ctx context.Context, t *taskSvc.Task) {
-	// 尝试发送消息
-	err := j.taskSvc.SendMessage(ctx, t)
+	err := j.routeTaskByTopic(ctx, t)
 
 	if err != nil {
 		// 发送失败：更新状态为 Fail
@@ -62,4 +70,19 @@ func (j *SendAwardMessage) dispatchSingleTask(ctx context.Context, t *taskSvc.Ta
 		return
 	}
 
+}
+
+func (j *SendAwardMessage) routeTaskByTopic(ctx context.Context, t *taskSvc.Task) error {
+	switch t.Topic {
+	case award.SendAwardTopic:
+		return j.taskSvc.SendMessage(ctx, t)
+	case activity.SaveOrderRecordTopic:
+		var message activity.SaveOrderTaskMessage
+		if err := json.Unmarshal([]byte(t.Message), &message); err != nil {
+			return fmt.Errorf("unmarshal save order task failed: %w", err)
+		}
+		return j.activityPartakeSvc.SaveOrderRecord(ctx, message.ToCreatePartakeOrder())
+	default:
+		return fmt.Errorf("unsupported task topic: %s", t.Topic)
+	}
 }

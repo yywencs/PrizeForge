@@ -24,6 +24,7 @@ const (
 	Activity_CalendarSignRebate_FullMethodName       = "/api.bigmarket.v1.Activity/CalendarSignRebate"
 	Activity_IsCalendarSignRebate_FullMethodName     = "/api.bigmarket.v1.Activity/IsCalendarSignRebate"
 	Activity_QueryUserActivityAccount_FullMethodName = "/api.bigmarket.v1.Activity/QueryUserActivityAccount"
+	Activity_LoadUserActivityAccount_FullMethodName  = "/api.bigmarket.v1.Activity/LoadUserActivityAccount"
 )
 
 // ActivityClient is the client API for Activity service.
@@ -45,6 +46,9 @@ type ActivityClient interface {
 	// 查询用户活动账户
 	// 对应: POST /api/v1/raffle/activity/query_user_activity_account
 	QueryUserActivityAccount(ctx context.Context, in *QueryUserActivityAccountRequest, opts ...grpc.CallOption) (*QueryUserActivityAccountReply, error)
+	// 加载单个用户活动账户额度到缓存
+	// 对应: POST /api/v1/raffle/activity/load_user_activity_account
+	LoadUserActivityAccount(ctx context.Context, in *LoadUserActivityAccountRequest, opts ...grpc.CallOption) (*LoadUserActivityAccountReply, error)
 }
 
 type activityClient struct {
@@ -105,6 +109,16 @@ func (c *activityClient) QueryUserActivityAccount(ctx context.Context, in *Query
 	return out, nil
 }
 
+func (c *activityClient) LoadUserActivityAccount(ctx context.Context, in *LoadUserActivityAccountRequest, opts ...grpc.CallOption) (*LoadUserActivityAccountReply, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(LoadUserActivityAccountReply)
+	err := c.cc.Invoke(ctx, Activity_LoadUserActivityAccount_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // ActivityServer is the server API for Activity service.
 // All implementations must embed UnimplementedActivityServer
 // for forward compatibility.
@@ -124,6 +138,9 @@ type ActivityServer interface {
 	// 查询用户活动账户
 	// 对应: POST /api/v1/raffle/activity/query_user_activity_account
 	QueryUserActivityAccount(context.Context, *QueryUserActivityAccountRequest) (*QueryUserActivityAccountReply, error)
+	// 加载单个用户活动账户额度到缓存
+	// 对应: POST /api/v1/raffle/activity/load_user_activity_account
+	LoadUserActivityAccount(context.Context, *LoadUserActivityAccountRequest) (*LoadUserActivityAccountReply, error)
 	mustEmbedUnimplementedActivityServer()
 }
 
@@ -148,6 +165,9 @@ func (UnimplementedActivityServer) IsCalendarSignRebate(context.Context, *IsCale
 }
 func (UnimplementedActivityServer) QueryUserActivityAccount(context.Context, *QueryUserActivityAccountRequest) (*QueryUserActivityAccountReply, error) {
 	return nil, status.Error(codes.Unimplemented, "method QueryUserActivityAccount not implemented")
+}
+func (UnimplementedActivityServer) LoadUserActivityAccount(context.Context, *LoadUserActivityAccountRequest) (*LoadUserActivityAccountReply, error) {
+	return nil, status.Error(codes.Unimplemented, "method LoadUserActivityAccount not implemented")
 }
 func (UnimplementedActivityServer) mustEmbedUnimplementedActivityServer() {}
 func (UnimplementedActivityServer) testEmbeddedByValue()                  {}
@@ -260,6 +280,24 @@ func _Activity_QueryUserActivityAccount_Handler(srv interface{}, ctx context.Con
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Activity_LoadUserActivityAccount_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(LoadUserActivityAccountRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ActivityServer).LoadUserActivityAccount(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Activity_LoadUserActivityAccount_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ActivityServer).LoadUserActivityAccount(ctx, req.(*LoadUserActivityAccountRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Activity_ServiceDesc is the grpc.ServiceDesc for Activity service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -286,6 +324,10 @@ var Activity_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "QueryUserActivityAccount",
 			Handler:    _Activity_QueryUserActivityAccount_Handler,
+		},
+		{
+			MethodName: "LoadUserActivityAccount",
+			Handler:    _Activity_LoadUserActivityAccount_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

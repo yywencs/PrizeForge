@@ -65,7 +65,7 @@ func wireApp(confServer *conf.Server, confData *conf.Data, rabbitMQ *conf.Rabbit
 	activitySkuStockConsumeJob := job.NewActivitySkuStockConsumeJob(activityQuotaUsecase)
 	taskRepo := data.NewTaskRepository(dbRouter, publisher)
 	taskUsecase := task.NewTaskUsecase(taskRepo)
-	sendAwardMessage := job.NewSendAwardMessage(taskUsecase, data_Mysql)
+	sendAwardMessage := job.NewSendAwardMessage(taskUsecase, activityPartakeUsecase, data_Mysql)
 	strategyAwardStockConsumeJob := job.NewStrategyAwardStockConsumeJob(strategyUsecase)
 	asynqServer := server.NewAsynqServer(asynq, activitySkuStockConsumeJob, sendAwardMessage, strategyAwardStockConsumeJob)
 	activityStockListener := listener.NewActivityStockListener(activityQuotaUsecase)

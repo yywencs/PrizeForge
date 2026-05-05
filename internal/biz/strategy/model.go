@@ -22,7 +22,7 @@ const (
 	RuleWeight    RuleChainName = "rule_weight"
 	RuleDefault   RuleChainName = "rule_default"
 	RuleLock      RuleTreeName  = "rule_lock"
-	RuleLuck      RuleTreeName  = "rule_luck"
+	RuleLuckAward RuleTreeName  = "rule_luck_award"
 	RuleStock     RuleTreeName  = "rule_stock"
 )
 

@@ -22,6 +22,7 @@ const _ = http.SupportPackageIsVersion1
 const OperationActivityCalendarSignRebate = "/api.bigmarket.v1.Activity/CalendarSignRebate"
 const OperationActivityDraw = "/api.bigmarket.v1.Activity/Draw"
 const OperationActivityIsCalendarSignRebate = "/api.bigmarket.v1.Activity/IsCalendarSignRebate"
+const OperationActivityLoadUserActivityAccount = "/api.bigmarket.v1.Activity/LoadUserActivityAccount"
 const OperationActivityQueryUserActivityAccount = "/api.bigmarket.v1.Activity/QueryUserActivityAccount"
 const OperationActivityRaffleActivityArmory = "/api.bigmarket.v1.Activity/RaffleActivityArmory"
 
@@ -35,6 +36,9 @@ type ActivityHTTPServer interface {
 	// IsCalendarSignRebate 判断是否签到
 	// 对应: POST /api/v1/raffle/activity/is_calendar_sign_rebate
 	IsCalendarSignRebate(context.Context, *IsCalendarSignRebateRequest) (*IsCalendarSignRebateReply, error)
+	// LoadUserActivityAccount 加载单个用户活动账户额度到缓存
+	// 对应: POST /api/v1/raffle/activity/load_user_activity_account
+	LoadUserActivityAccount(context.Context, *LoadUserActivityAccountRequest) (*LoadUserActivityAccountReply, error)
 	// QueryUserActivityAccount 查询用户活动账户
 	// 对应: POST /api/v1/raffle/activity/query_user_activity_account
 	QueryUserActivityAccount(context.Context, *QueryUserActivityAccountRequest) (*QueryUserActivityAccountReply, error)
@@ -50,6 +54,7 @@ func RegisterActivityHTTPServer(s *http.Server, srv ActivityHTTPServer) {
 	r.POST("/api/v1/strategy/raffle/activity/calendar_sign_rebate", _Activity_CalendarSignRebate0_HTTP_Handler(srv))
 	r.POST("/api/v1/strategy/raffle/activity/is_calendar_sign_rebate", _Activity_IsCalendarSignRebate0_HTTP_Handler(srv))
 	r.POST("/api/v1/strategy/raffle/activity/query_user_activity_account", _Activity_QueryUserActivityAccount0_HTTP_Handler(srv))
+	r.POST("/api/v1/strategy/raffle/activity/load_user_activity_account", _Activity_LoadUserActivityAccount0_HTTP_Handler(srv))
 }
 
 func _Activity_RaffleActivityArmory0_HTTP_Handler(srv ActivityHTTPServer) func(ctx http.Context) error {
@@ -159,6 +164,28 @@ func _Activity_QueryUserActivityAccount0_HTTP_Handler(srv ActivityHTTPServer) fu
 	}
 }
 
+func _Activity_LoadUserActivityAccount0_HTTP_Handler(srv ActivityHTTPServer) func(ctx http.Context) error {
+	return func(ctx http.Context) error {
+		var in LoadUserActivityAccountRequest
+		if err := ctx.Bind(&in); err != nil {
+			return err
+		}
+		if err := ctx.BindQuery(&in); err != nil {
+			return err
+		}
+		http.SetOperation(ctx, OperationActivityLoadUserActivityAccount)
+		h := ctx.Middleware(func(ctx context.Context, req interface{}) (interface{}, error) {
+			return srv.LoadUserActivityAccount(ctx, req.(*LoadUserActivityAccountRequest))
+		})
+		out, err := h(ctx, &in)
+		if err != nil {
+			return err
+		}
+		reply := out.(*LoadUserActivityAccountReply)
+		return ctx.Result(200, reply)
+	}
+}
+
 type ActivityHTTPClient interface {
 	// CalendarSignRebate 签到返利
 	// 对应: POST /api/v1/raffle/activity/calendar_sign_rebate
@@ -169,6 +196,9 @@ type ActivityHTTPClient interface {
 	// IsCalendarSignRebate 判断是否签到
 	// 对应: POST /api/v1/raffle/activity/is_calendar_sign_rebate
 	IsCalendarSignRebate(ctx context.Context, req *IsCalendarSignRebateRequest, opts ...http.CallOption) (rsp *IsCalendarSignRebateReply, err error)
+	// LoadUserActivityAccount 加载单个用户活动账户额度到缓存
+	// 对应: POST /api/v1/raffle/activity/load_user_activity_account
+	LoadUserActivityAccount(ctx context.Context, req *LoadUserActivityAccountRequest, opts ...http.CallOption) (rsp *LoadUserActivityAccountReply, err error)
 	// QueryUserActivityAccount 查询用户活动账户
 	// 对应: POST /api/v1/raffle/activity/query_user_activity_account
 	QueryUserActivityAccount(ctx context.Context, req *QueryUserActivityAccountRequest, opts ...http.CallOption) (rsp *QueryUserActivityAccountReply, err error)
@@ -222,6 +252,21 @@ func (c *ActivityHTTPClientImpl) IsCalendarSignRebate(ctx context.Context, in *I
 	pattern := "/api/v1/strategy/raffle/activity/is_calendar_sign_rebate"
 	path := binding.EncodeURL(pattern, in, false)
 	opts = append(opts, http.Operation(OperationActivityIsCalendarSignRebate))
+	opts = append(opts, http.PathTemplate(pattern))
+	err := c.cc.Invoke(ctx, "POST", path, in, &out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// LoadUserActivityAccount 加载单个用户活动账户额度到缓存
+// 对应: POST /api/v1/raffle/activity/load_user_activity_account
+func (c *ActivityHTTPClientImpl) LoadUserActivityAccount(ctx context.Context, in *LoadUserActivityAccountRequest, opts ...http.CallOption) (*LoadUserActivityAccountReply, error) {
+	var out LoadUserActivityAccountReply
+	pattern := "/api/v1/strategy/raffle/activity/load_user_activity_account"
+	path := binding.EncodeURL(pattern, in, false)
+	opts = append(opts, http.Operation(OperationActivityLoadUserActivityAccount))
 	opts = append(opts, http.PathTemplate(pattern))
 	err := c.cc.Invoke(ctx, "POST", path, in, &out, opts...)
 	if err != nil {

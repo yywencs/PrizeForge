@@ -1,6 +1,7 @@
 package data
 
 import (
+	"big-market-kratos/internal/biz/activity"
 	"big-market-kratos/internal/conf"
 	"big-market-kratos/pkg/rabbitmq"
 	"context"
@@ -88,5 +89,5 @@ func (p *Publisher) PublishTopic(ctx context.Context, topic string, event *rabbi
 }
 
 func (p *Publisher) PublishSaveOrder(ctx context.Context, event *rabbitmq.BaseEvent) error {
-	return p.client.Publish(ctx, "save_order_record", event)
+	return p.client.Publish(ctx, activity.SaveOrderRecordTopic, event)
 }

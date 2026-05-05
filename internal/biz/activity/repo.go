@@ -54,4 +54,6 @@ type Repo interface {
 	QueryRaffleActivityAccountDayPartakeCount(ctx context.Context, userID string, activityID int64) (int64, error)
 	// AssembleActivityAccountByActivityId 组装活动对应的所有用户额度到缓存
 	AssembleActivityAccountByActivityId(ctx context.Context, activityID int64) error
+	// AssembleActivityAccountByUserId 组装单个用户活动额度到缓存
+	AssembleActivityAccountByUserId(ctx context.Context, userID string, activityID int64) error
 }

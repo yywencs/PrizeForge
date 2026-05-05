@@ -42,7 +42,7 @@ func NewRabbitMQServer(
 
 	s.RegisterListener(activity.ActivitySkuStockZeroTopic, stockListener)
 	s.RegisterListener(activity.ActivityAwardSendTopic, rebateListener)
-	s.RegisterListener("save_order_record", saveOrderListener)
+	s.RegisterListener(activity.SaveOrderRecordTopic, saveOrderListener)
 
 	return s
 }

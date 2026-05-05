@@ -384,6 +384,14 @@ func (d *Repository) QueryActivityAccountEntity(ctx context.Context, userID stri
 	return activityAccount, nil
 }
 
+func (d *Repository) AssembleActivityAccountByUserId(ctx context.Context, userID string, activityID int64) error {
+	account, err := d.QueryActivityAccountEntity(ctx, userID, activityID)
+	if err != nil {
+		return err
+	}
+	return d.cacheActivityAccountSnapshot(ctx, account)
+}
+
 func (d *Repository) ClearActivitySkuStock(ctx context.Context, sku int64) error {
 	err := d.db.WithContext(ctx).Table("raffle_activity_sku_stock").
 		Where("sku = ?", sku).
@@ -534,6 +542,7 @@ func (d *Repository) UpdateActivitySkuStock(ctx context.Context, sku int64) erro
 	return nil
 }
 
+// WARNING：为了测压测，会把所有用户的额度都装配到缓存中
 func (d *Repository) AssembleActivityAccountByActivityId(ctx context.Context, activityID int64) error {
 	// 使用一个脱离原始 HTTP 请求的 Background Context 来进行耗时较长的批量装配
 	// 避免因为装配大量数据导致 HTTP 请求本身超时从而中止了整个装配过程
@@ -598,38 +607,55 @@ func (d *Repository) AssembleActivityAccountByActivityId(ctx context.Context, ac
 				activityAccount.DayCountSurplus = account.DayCountSurplus
 			}
 
-			key := GetActivityAccountKey(activityID, account.UserID)
-			_ = d.redis.Set(&cache.Item{
-				Ctx:   assembleCtx,
-				Key:   key,
-				Value: activityAccount,
-				TTL:   time.Hour,
-			})
-
-			totalKey := GetActivityAccountTotalSurplusKey(activityID, account.UserID)
-			_ = d.redis.Set(&cache.Item{
-				Ctx:   assembleCtx,
-				Key:   totalKey,
-				Value: activityAccount.TotalCountSurplus,
-				TTL:   time.Hour,
-			})
-
-			monthKey := GetActivityAccountMonthSurplusKey(activityID, account.UserID, month)
-			_ = d.redis.Set(&cache.Item{
-				Ctx:   assembleCtx,
-				Key:   monthKey,
-				Value: activityAccount.MonthCountSurplus,
-				TTL:   time.Hour,
-			})
-
-			dayKey := GetActivityAccountDaySurplusKey(activityID, account.UserID, day)
-			_ = d.redis.Set(&cache.Item{
-				Ctx:   assembleCtx,
-				Key:   dayKey,
-				Value: activityAccount.DayCountSurplus,
-				TTL:   time.Hour,
-			})
+			_ = d.cacheActivityAccountSnapshot(assembleCtx, activityAccount)
 		}
 	}
+	return nil
+}
+
+func (d *Repository) cacheActivityAccountSnapshot(ctx context.Context, activityAccount *activity.ActivityAccount) error {
+	month := time.Now().Format("2006-01")
+	day := time.Now().Format("2006-01-02")
+
+	key := GetActivityAccountKey(activityAccount.ActivityID, activityAccount.UserID)
+	if err := d.redis.Set(&cache.Item{
+		Ctx:   ctx,
+		Key:   key,
+		Value: activityAccount,
+		TTL:   time.Hour,
+	}); err != nil {
+		return err
+	}
+
+	totalKey := GetActivityAccountTotalSurplusKey(activityAccount.ActivityID, activityAccount.UserID)
+	if err := d.redis.Set(&cache.Item{
+		Ctx:   ctx,
+		Key:   totalKey,
+		Value: activityAccount.TotalCountSurplus,
+		TTL:   time.Hour,
+	}); err != nil {
+		return err
+	}
+
+	monthKey := GetActivityAccountMonthSurplusKey(activityAccount.ActivityID, activityAccount.UserID, month)
+	if err := d.redis.Set(&cache.Item{
+		Ctx:   ctx,
+		Key:   monthKey,
+		Value: activityAccount.MonthCountSurplus,
+		TTL:   time.Hour,
+	}); err != nil {
+		return err
+	}
+
+	dayKey := GetActivityAccountDaySurplusKey(activityAccount.ActivityID, activityAccount.UserID, day)
+	if err := d.redis.Set(&cache.Item{
+		Ctx:   ctx,
+		Key:   dayKey,
+		Value: activityAccount.DayCountSurplus,
+		TTL:   time.Hour,
+	}); err != nil {
+		return err
+	}
+
 	return nil
 }

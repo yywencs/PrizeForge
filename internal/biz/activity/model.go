@@ -13,6 +13,7 @@ const (
 	ActivitySkuStockZeroTopic = "activity_sku_stock_zero_topic"
 
 	ActivityAwardSendTopic = "activity_award_send_topic"
+	SaveOrderRecordTopic   = "save_order_record"
 )
 
 const (
@@ -153,6 +154,18 @@ type CreatePartakeOrder struct {
 	ActivityAccountDay *ActivityAccountDay
 	// UserRaffleOrder 抽奖单实体
 	UserRaffleOrder *UserRaffleOrder
+}
+
+type SaveOrderTaskMessage struct {
+	UserID  string `json:"u"`
+	OrderID string `json:"o"`
+}
+
+func (m *SaveOrderTaskMessage) ToCreatePartakeOrder() *CreatePartakeOrder {
+	return &CreatePartakeOrder{
+		UserID:          m.UserID,
+		UserRaffleOrder: &UserRaffleOrder{UserID: m.UserID, OrderID: m.OrderID},
+	}
 }
 
 type SkuRecharge struct {

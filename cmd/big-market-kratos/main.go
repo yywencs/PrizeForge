@@ -69,7 +69,7 @@ func main() {
 	// }()
 
 	client, err := clientv3.New(clientv3.Config{
-		Endpoints: []string{"172.30.0.10:2379"},
+		Endpoints: []string{"127.0.0.1:2379"},
 	})
 	if err != nil {
 		panic(err)

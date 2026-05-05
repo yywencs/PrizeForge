@@ -49,11 +49,11 @@ func (s *ActivityService) RaffleActivityArmory(ctx context.Context, req *v1.Raff
 		return nil, err
 	}
 
-	// 装配用户额度到缓存
-	err = s.quotaUsecase.AssembleActivityAccountByActivityId(ctx, req.GetActivityId())
-	if err != nil {
-		return nil, err
-	}
+	// 装配用户额度到缓存，只用于极限测试
+	// err = s.quotaUsecase.AssembleActivityAccountByActivityId(ctx, req.GetActivityId())
+	// if err != nil {
+	// 	return nil, err
+	// }
 
 	return &v1.RaffleActivityArmoryReply{Success: strategyReady}, nil
 }
@@ -144,4 +144,14 @@ func (s *ActivityService) QueryUserActivityAccount(ctx context.Context, req *v1.
 		MonthCount:        int64(account.MonthCount),
 		MonthCountSurplus: int64(account.MonthCountSurplus),
 	}, nil
+}
+
+func (s *ActivityService) LoadUserActivityAccount(ctx context.Context, req *v1.LoadUserActivityAccountRequest) (*v1.LoadUserActivityAccountReply, error) {
+	if req.GetUserId() == "" || req.GetActivityId() <= 0 {
+		return nil, kerrors.BadRequest("INVALID_ACCOUNT_LOAD_PARAMS", "invalid user_id or activity_id")
+	}
+	if err := s.quotaUsecase.AssembleActivityAccountByUserId(ctx, req.GetUserId(), req.GetActivityId()); err != nil {
+		return nil, err
+	}
+	return &v1.LoadUserActivityAccountReply{Success: true}, nil
 }

@@ -89,6 +89,27 @@ paths:
                         application/json:
                             schema:
                                 $ref: '#/components/schemas/api.bigmarket.v1.IsCalendarSignRebateReply'
+    /api/v1/strategy/raffle/activity/load_user_activity_account:
+        post:
+            tags:
+                - Activity
+            description: |-
+                加载单个用户活动账户额度到缓存
+                 对应: POST /api/v1/raffle/activity/load_user_activity_account
+            operationId: Activity_LoadUserActivityAccount
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/api.bigmarket.v1.LoadUserActivityAccountRequest'
+                required: true
+            responses:
+                "200":
+                    description: OK
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/api.bigmarket.v1.LoadUserActivityAccountReply'
     /api/v1/strategy/raffle/activity/query_user_activity_account:
         post:
             tags:
@@ -235,6 +256,18 @@ components:
             type: object
             properties:
                 userId:
+                    type: string
+        api.bigmarket.v1.LoadUserActivityAccountReply:
+            type: object
+            properties:
+                success:
+                    type: boolean
+        api.bigmarket.v1.LoadUserActivityAccountRequest:
+            type: object
+            properties:
+                userId:
+                    type: string
+                activityId:
                     type: string
         api.bigmarket.v1.QueryRaffleAwardListReply:
             type: object

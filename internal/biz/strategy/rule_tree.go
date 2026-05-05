@@ -39,9 +39,9 @@ func (f *ruleTreeFactory) newDecisionTreeEngine(ruleTree *RuleTree) (*ruleTreeEn
 	}
 
 	group := map[RuleTreeName]ruleNode{
-		RuleLock:  newRuleLockNode(),
-		RuleLuck:  newRuleLuckNode(),
-		RuleStock: newRuleStockNode(f.repository),
+		RuleLock:      newRuleLockNode(),
+		RuleLuckAward: newRuleLuckAwardNode(),
+		RuleStock:     newRuleStockNode(f.repository),
 	}
 
 	// 3. 返回组装好的引擎
@@ -159,13 +159,13 @@ func (r *ruleLockNode) logic(ctx context.Context, strategyID int64, awardID int6
 }
 
 // =====
-type ruleLuckNode struct {
+type ruleLuckAwardNode struct {
 }
 
-func newRuleLuckNode() ruleNode {
-	return &ruleLuckNode{}
+func newRuleLuckAwardNode() ruleNode {
+	return &ruleLuckAwardNode{}
 }
-func (r *ruleLuckNode) logic(ctx context.Context, strategyID int64, awardID int64, ruleValue string) (*treeAction, error) {
+func (r *ruleLuckAwardNode) logic(ctx context.Context, strategyID int64, awardID int64, ruleValue string) (*treeAction, error) {
 	logger.Info("规则过滤-兜底奖品",
 		"strategyID", strategyID,
 		"awardID", awardID,
