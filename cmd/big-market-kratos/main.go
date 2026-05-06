@@ -56,8 +56,8 @@ func newApp(
 		kratos.Server(
 			gs,
 			hs,
-			// asynqSrv,
-			// rmqSrv,
+			asynqSrv,
+			rmqSrv,
 		),
 	)
 }

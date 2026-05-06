@@ -9,7 +9,7 @@ require (
 	github.com/go-kratos/kratos/v2 v2.9.2
 	github.com/google/wire v0.6.0
 	github.com/hibiken/asynq v0.26.0
-	github.com/klauspost/compress v1.17.9
+	github.com/klauspost/compress v1.18.0
 	github.com/rabbitmq/amqp091-go v1.10.0
 	github.com/redis/go-redis/v9 v9.18.0
 	github.com/vmihailenco/go-tinylfu v0.2.2
@@ -48,6 +48,7 @@ require (
 	github.com/jinzhu/now v1.1.5 // indirect
 	github.com/robfig/cron/v3 v3.0.1 // indirect
 	github.com/spf13/cast v1.10.0 // indirect
+	github.com/stretchr/testify v1.11.1 // indirect
 	github.com/vmihailenco/tagparser/v2 v2.0.0 // indirect
 	go.etcd.io/etcd/api/v3 v3.6.8 // indirect
 	go.etcd.io/etcd/client/pkg/v3 v3.6.8 // indirect

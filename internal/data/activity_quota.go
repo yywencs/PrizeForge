@@ -342,8 +342,29 @@ func (d *Repository) QueryActivityAccountEntity(ctx context.Context, userID stri
 		Where("user_id = ? AND activity_id = ? AND month = ?", userID, activityID, month).
 		First(&accountMonthPO).Error
 
-	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, err
+	if err != nil {
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, err
+		}
+
+		// 月账户缺失时，用总账户当前月额度初始化一条记录，避免后续快照和扣减链路依赖分维度账户时再次查空。
+		accountMonthPO = po.RaffleActivityAccountMonth{
+			UserID:            accountPO.UserID,
+			ActivityID:        accountPO.ActivityID,
+			Month:             month,
+			MonthCount:        accountPO.MonthCount,
+			MonthCountSurplus: accountPO.MonthCountSurplus,
+		}
+		if createErr := db.WithContext(ctx).Table("raffle_activity_account_month").Create(&accountMonthPO).Error; createErr != nil {
+			if !errors.Is(createErr, gorm.ErrDuplicatedKey) && !strings.Contains(createErr.Error(), "Duplicate entry") {
+				return nil, createErr
+			}
+			if reloadErr := db.WithContext(ctx).Table("raffle_activity_account_month").
+				Where("user_id = ? AND activity_id = ? AND month = ?", userID, activityID, month).
+				First(&accountMonthPO).Error; reloadErr != nil {
+				return nil, reloadErr
+			}
+		}
 	}
 
 	// 3. 查询日账户
@@ -353,8 +374,29 @@ func (d *Repository) QueryActivityAccountEntity(ctx context.Context, userID stri
 		Where("user_id = ? AND activity_id = ? AND day = ?", userID, activityID, day).
 		First(&accountDayPO).Error
 
-	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, err
+	if err != nil {
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, err
+		}
+
+		// 日账户缺失时，同步按总账户当前日额度补齐记录，保证账户维度数据完整。
+		accountDayPO = po.RaffleActivityAccountDay{
+			UserID:          accountPO.UserID,
+			ActivityID:      accountPO.ActivityID,
+			Day:             day,
+			DayCount:        accountPO.DayCount,
+			DayCountSurplus: accountPO.DayCountSurplus,
+		}
+		if createErr := db.WithContext(ctx).Table("raffle_activity_account_day").Create(&accountDayPO).Error; createErr != nil {
+			if !errors.Is(createErr, gorm.ErrDuplicatedKey) && !strings.Contains(createErr.Error(), "Duplicate entry") {
+				return nil, createErr
+			}
+			if reloadErr := db.WithContext(ctx).Table("raffle_activity_account_day").
+				Where("user_id = ? AND activity_id = ? AND day = ?", userID, activityID, day).
+				First(&accountDayPO).Error; reloadErr != nil {
+				return nil, reloadErr
+			}
+		}
 	}
 
 	// 4. 组装实体

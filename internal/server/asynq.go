@@ -15,7 +15,7 @@ import (
 	"github.com/hibiken/asynq"
 )
 
-// 🌟 断言：确保 AsynqServer 严格实现了 Kratos 的 Server 接口
+// 确保 AsynqServer 严格实现了 Kratos 的 Server 接口
 var _ transport.Server = (*AsynqServer)(nil)
 
 type AsynqServer struct {
@@ -24,7 +24,6 @@ type AsynqServer struct {
 	scheduler *asynq.Scheduler
 }
 
-// 🌟 构造函数：直接向 Wire 伸手要组装好的 Job！不要再传 Usecase 进来了！
 func NewAsynqServer(
 	cfg *conf.Asynq,
 	skuStockJob *job.ActivitySkuStockConsumeJob,
@@ -55,7 +54,6 @@ func NewAsynqServer(
 	mux := asynq.NewServeMux()
 	scheduler := asynq.NewScheduler(redisOpt, &asynq.SchedulerOpts{})
 
-	// 🌟 在构造函数里直接挂载路由！一行废话都没有！
 	mux.HandleFunc(activity.TaskTypeActivitySkuStockConsume, skuStockJob.ProcessTask)
 	mux.HandleFunc(activity.TaskTypeActivityStateSync, stateSyncJob.ProcessTask)
 	mux.HandleFunc(task.TaskTypeStrategyAwardStockConsume, strategyAwardStockJob.ProcessTask)
@@ -84,7 +82,7 @@ func (s *AsynqServer) Start(ctx context.Context) error {
 	return nil
 }
 
-// 🌟 改造 2：适配 Kratos 的 Stop(ctx)
+// 适配 Kratos 的 Stop(ctx)
 func (s *AsynqServer) Stop(ctx context.Context) error {
 	logger.Info("Asynq Server stopping...")
 	s.scheduler.Shutdown()
