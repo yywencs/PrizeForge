@@ -152,34 +152,25 @@ services:
     networks:
       - my-network
 
-  canal-server:
-    image: canal/canal-server:v1.1.8
-    container_name: canal-server
+  cdc-sync:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: cdc-sync
+    container_name: cdc-sync
     restart: always
-    ports:
-      - "127.0.0.1:11111:11111"
-    volumes:
-      - ./canal/server/conf:/home/admin/canal-server/conf
-      - ./canal/server/logs:/home/admin/canal-server/logs
     depends_on:
       - mysql
+      - elasticsearch
+    environment:
+      TZ: Asia/Shanghai
+      CDC_MYSQL_ADDR: mysql:3306
+      CDC_MYSQL_USER: canal
+      CDC_MYSQL_PASSWORD: ${CANAL_MYSQL_PASSWORD}
+      CDC_ES_ADDR: http://elasticsearch:9200
     networks:
       - my-network
 
-  canal-adapter:
-    image: canal/canal-adapter:v1.1.8
-    container_name: canal-adapter
-    restart: always
-    ports:
-      - "127.0.0.1:8081:8081"
-    volumes:
-      - ./canal/adapter/conf:/home/admin/canal-adapter/conf
-      - ./canal/adapter/logs:/home/admin/canal-adapter/logs
-    depends_on:
-      - canal-server
-      - elasticsearch
-    networks:
-      - my-network
 networks:
   my-network:
     driver: bridge
