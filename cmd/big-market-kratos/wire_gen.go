@@ -7,13 +7,19 @@
 package main
 
 import (
-	"big-market-kratos/internal/biz/activity"
-	"big-market-kratos/internal/biz/award"
-	"big-market-kratos/internal/biz/rebate"
-	"big-market-kratos/internal/biz/strategy"
-	"big-market-kratos/internal/biz/task"
+	activity2 "big-market-kratos/internal/biz/activity"
+	award2 "big-market-kratos/internal/biz/award"
+	rebate2 "big-market-kratos/internal/biz/rebate"
+	strategy2 "big-market-kratos/internal/biz/strategy"
+	task2 "big-market-kratos/internal/biz/task"
 	"big-market-kratos/internal/conf"
 	"big-market-kratos/internal/data"
+	"big-market-kratos/internal/data/activity"
+	"big-market-kratos/internal/data/award"
+	"big-market-kratos/internal/data/infra"
+	"big-market-kratos/internal/data/rebate"
+	"big-market-kratos/internal/data/strategy"
+	"big-market-kratos/internal/data/task"
 	"big-market-kratos/internal/dcc"
 	"big-market-kratos/internal/job"
 	"big-market-kratos/internal/listener"
@@ -33,39 +39,39 @@ import (
 // wireApp init kratos application.
 func wireApp(confServer *conf.Server, confData *conf.Data, rabbitMQ *conf.RabbitMQ, asynq *conf.Asynq, monitor *conf.Monitor, logger log.Logger, configGetter dcc.ConfigGetter) (*kratos.App, func(), error) {
 	data_Mysql := data.NewMysqlConfig(confData)
-	db := data.NewDB(data_Mysql)
+	db := infra.NewDB(data_Mysql)
 	data_Redis := data.NewRedisConfig(confData)
-	cache := data.NewRedisClient(data_Redis)
-	client := data.NewAsynqClient(asynq)
-	dbRouter := data.NewDBRouter(data_Mysql)
-	repo := data.NewStrategyRepository(db, cache, client, dbRouter)
-	strategyUsecase := strategy.NewStrategyUsecase(repo)
-	connection, err := data.NewConnection(rabbitMQ)
+	cache := infra.NewRedisClient(data_Redis)
+	client := infra.NewAsynqClient(asynq)
+	dbRouter := infra.NewDBRouter(data_Mysql)
+	repo := strategy.NewStrategyRepository(db, cache, client, dbRouter)
+	strategyUsecase := strategy2.NewStrategyUsecase(repo)
+	connection, err := infra.NewConnection(rabbitMQ)
 	if err != nil {
 		return nil, nil, err
 	}
-	rabbitMQPublisher, err := data.NewRabbitMQPublisher(connection)
+	rabbitMQPublisher, err := infra.NewRabbitMQPublisher(connection)
 	if err != nil {
 		return nil, nil, err
 	}
-	publisher := data.NewPublisher(rabbitMQPublisher, rabbitMQ)
-	inspector := data.NewAsynqInspector(asynq)
-	activityRepo := data.NewActivityRepository(dbRouter, db, cache, publisher, client, inspector)
-	activityQuotaUsecase := activity.NewActivityQuotaUsecase(activityRepo)
+	publisher := infra.NewPublisher(rabbitMQPublisher, rabbitMQ)
+	inspector := infra.NewAsynqInspector(asynq)
+	activityRepo := activity.NewRepository(dbRouter, db, cache, publisher, client, inspector)
+	activityQuotaUsecase := activity2.NewActivityQuotaUsecase(activityRepo)
 	strategyService := service.NewStrategyService(strategyUsecase, activityQuotaUsecase)
-	stockManager := activity.NewStockManager(activityRepo)
-	activityPartakeUsecase := activity.NewActivityPartakeUsecase(activityRepo)
-	awardRepo := data.NewUserAwardRecordRepository(dbRouter, cache, publisher)
-	awardUsecase := award.NewAwardUsecase(awardRepo)
-	rebateRepo := data.NewRebateRepository(db, dbRouter, publisher)
-	behaviorRebateUsecase := rebate.NewBehaviorRebateUsecase(rebateRepo)
+	stockManager := activity2.NewStockManager(activityRepo)
+	activityPartakeUsecase := activity2.NewActivityPartakeUsecase(activityRepo)
+	awardRepo := award.NewUserAwardRecordRepository(dbRouter, cache, publisher)
+	awardUsecase := award2.NewAwardUsecase(awardRepo)
+	rebateRepo := rebate.NewRebateRepository(db, dbRouter, publisher)
+	behaviorRebateUsecase := rebate2.NewBehaviorRebateUsecase(rebateRepo)
 	activityService := service.NewActivityService(stockManager, activityPartakeUsecase, activityQuotaUsecase, strategyUsecase, awardUsecase, behaviorRebateUsecase)
 	grpcServer := server.NewGRPCServer(confServer, strategyService, activityService, logger)
 	httpServer := server.NewHTTPServer(confServer, strategyService, activityService, logger, configGetter)
 	metricsServer := server.NewMetricsServer(monitor, logger)
 	activitySkuStockConsumeJob := job.NewActivitySkuStockConsumeJob(activityQuotaUsecase)
-	taskRepo := data.NewTaskRepository(dbRouter, publisher)
-	taskUsecase := task.NewTaskUsecase(taskRepo)
+	taskRepo := task.NewTaskRepository(dbRouter, publisher)
+	taskUsecase := task2.NewTaskUsecase(taskRepo)
 	sendAwardMessage := job.NewSendAwardMessage(taskUsecase, activityPartakeUsecase, data_Mysql)
 	strategyAwardStockConsumeJob := job.NewStrategyAwardStockConsumeJob(strategyUsecase)
 	asynqServer := server.NewAsynqServer(asynq, activitySkuStockConsumeJob, sendAwardMessage, strategyAwardStockConsumeJob)
