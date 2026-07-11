@@ -1,5 +1,8 @@
 package middleware
 
+// Status: TODO 占位，未接入 —— RateLimiter 当前只透传请求，限流逻辑未实现。
+// 接入前需先实现真正的限流（Redis 令牌桶或本地计数器），并在 server 中 Use。
+
 import (
 	"net/http"
 

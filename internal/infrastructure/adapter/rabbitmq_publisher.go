@@ -1,13 +1,13 @@
 package adapter
 
 import (
+	"context"
+	"encoding/json"
+	"fmt"
 	"prizeforge/internal/domain/activity"
 	"prizeforge/internal/metrics"
 	"prizeforge/pkg/config"
 	"prizeforge/pkg/rabbitmq"
-	"context"
-	"encoding/json"
-	"fmt"
 	"sync"
 	"time"
 

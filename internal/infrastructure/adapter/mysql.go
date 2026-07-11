@@ -1,10 +1,10 @@
 package adapter
 
 import (
-	"prizeforge/internal/metrics"
-	"prizeforge/pkg/config"
 	"database/sql"
 	"fmt"
+	"prizeforge/internal/metrics"
+	"prizeforge/pkg/config"
 	"time"
 
 	"gorm.io/driver/mysql"

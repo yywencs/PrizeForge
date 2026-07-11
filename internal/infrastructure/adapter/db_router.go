@@ -1,9 +1,9 @@
 package adapter
 
 import (
-	"prizeforge/pkg/config"
 	"fmt"
 	"hash/crc32"
+	"prizeforge/pkg/config"
 
 	"gorm.io/gorm"
 )

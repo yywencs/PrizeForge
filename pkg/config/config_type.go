@@ -123,4 +123,3 @@ type LogConfig struct {
 	MaxAge     int    `mapstructure:"max_age"`
 	Compress   bool   `mapstructure:"compress"`
 }
-

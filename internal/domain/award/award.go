@@ -1,8 +1,8 @@
 package award
 
 import (
-	"prizeforge/pkg/rabbitmq"
 	"context"
+	"prizeforge/pkg/rabbitmq"
 )
 
 type AwardUsecase struct {

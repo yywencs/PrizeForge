@@ -1,9 +1,9 @@
 package rebate
 
 import (
-	"prizeforge/pkg/xrand"
 	"context"
 	"fmt"
+	"prizeforge/pkg/xrand"
 )
 
 type BehaviorRebateUsecase struct {

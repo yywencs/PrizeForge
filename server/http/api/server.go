@@ -1,14 +1,19 @@
 package api
 
 import (
+	"context"
+	"fmt"
+	"net/http"
+
 	"prizeforge/internal/application/api"
+	"prizeforge/internal/middleware"
 
 	"github.com/gin-gonic/gin"
-	"prizeforge/server/http/common"
 )
 
 type Server struct {
 	engine          *gin.Engine
+	httpServer      *http.Server
 	addr            string
 	strategyUsecase *api.StrategyUsecase
 	activityUsecase *api.ActivityUsecase
@@ -23,13 +28,28 @@ func NewServer(addr string, strategyUsecase *api.StrategyUsecase, activityUsecas
 	}
 
 	s.engine.Use(gin.Recovery())
-	s.engine.Use(common.CrosHandler())
+	s.engine.Use(middleware.CORS())
+	s.engine.Use(middleware.PrometheusMetrics())
 	s.registerRoutes()
 	return s
 }
 
 func (s *Server) Run() error {
-	return s.engine.Run(s.addr)
+	s.httpServer = &http.Server{
+		Addr:    s.addr,
+		Handler: s.engine,
+	}
+	if err := s.httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		return fmt.Errorf("listen and serve: %w", err)
+	}
+	return nil
+}
+
+func (s *Server) Shutdown(ctx context.Context) error {
+	if s.httpServer == nil {
+		return nil
+	}
+	return s.httpServer.Shutdown(ctx)
 }
 
 func (s *Server) Engine() *gin.Engine {

@@ -1,8 +1,8 @@
 package api
 
 import (
-	"prizeforge/internal/domain/strategy"
 	"context"
+	"prizeforge/internal/domain/strategy"
 )
 
 // StrategyUsecase API侧策略用例——薄封装，直接委托给 domain service

@@ -1,8 +1,8 @@
 package adapter
 
 import (
-	"prizeforge/pkg/config"
 	"fmt"
+	"prizeforge/pkg/config"
 
 	amqp "github.com/rabbitmq/amqp091-go"
 )

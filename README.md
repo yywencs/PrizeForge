@@ -87,12 +87,20 @@ prizeforge/
 │   │   ├── adapter/             # MySQL、Redis、RabbitMQ、Asynq 适配器
 │   │   ├── dbutil/              # 数据库工具
 │   │   └── repository/          # 仓储实现（GORM、缓存、分库分表路由）
-│   ├── bootstrap/               # 依赖注入（组合根）
-│   ├── cdc/                     # CDC 变更数据捕获（MySQL → ES）
+│   │       ├── activityrepo/    # 活动仓储实现（package 名带 repo 后缀，避免与 domain/activity 重名）
+│   │       ├── awardrepo/
+│   │       ├── rebaterepo/
+│   │       ├── strategyrepo/
+│   │       ├── taskrepo/
+│   │       └── po/              # GORM 持久化对象（PO）
+│   ├── bootstrap/               # 依赖注入（组合根，区分 NewAPIApp / NewAdminApp）
+│   ├── cdc/                     # CDC 变更数据捕获（MySQL → ES，走环境变量配置）
+│   ├── job/                     # Asynq 任务处理器（sku 库存消费 / 发奖分发 / 策略奖品库存消费）
+│   ├── listener/                # RabbitMQ 消费者与监听器（库存归零 / 返利发奖 / 订单持久化）
 │   ├── metrics/                 # Prometheus 指标定义
-│   ├── middleware/              # HTTP 中间件（鉴权、限流、降级）
+│   ├── middleware/              # HTTP 中间件（CORS、Prometheus、Auth、Degrade、RateLimiter）
 │   ├── shared/xerr/             # 统一错误定义
-│   └── worker/                  # 后台异步任务
+│   └── worker/                  # Asynq 后台 worker
 ├── server/
 │   └── http/                    # Gin HTTP 路由与处理器
 │       ├── api/                 # 用户端路由
@@ -103,10 +111,16 @@ prizeforge/
 │   ├── config/                  # Viper 配置加载
 │   ├── logger/                  # Zap 日志
 │   ├── rabbitmq/                # RabbitMQ 事件封装
-│   └── utils/                   # 通用工具
+│   └── xrand/                   # 安全随机数
 ├── monitoring/                  # Grafana Dashboard + Prometheus 配置
 └── docker-compose.yaml
 ```
+
+### 进程模型与配置说明
+
+- `cmd/api`：HTTP 服务 + Asynq worker + RabbitMQ consumer 一体进程（`bootstrap.NewAPIApp`）。需要 RabbitMQ 和 Asynq Redis 可达；RabbitMQ 连接失败时直接 fatal。
+- `cmd/admin`：仅 admin HTTP 服务（`bootstrap.NewAdminApp`），不建 RabbitMQ 连接、不启动 worker/consumer，可在无 RabbitMQ 的轻量环境启动。
+- `cmd/cdc-sync`：独立的 CDC sidecar，配置走**环境变量**（`cdc.LoadConfigFromEnv`，`CDC_*` 前缀），不依赖 `configs/config.yaml` 和 Viper，可单独部署，请勿改回 viper。
 
 ## 快速开始
 

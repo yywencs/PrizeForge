@@ -25,7 +25,7 @@ type Config struct {
 	MySQLServerID     uint32
 	IncludeTableRegex []string
 
-	ESAddr       string
+	ESAddr        string
 	ESIndexPrefix string
 }
 

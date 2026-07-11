@@ -1,5 +1,11 @@
 package middleware
 
+// Status: 已实现，未接入 —— Auth 中间件当前没有挂进任何 HTTP server。
+// 注意：默认 DefaultAuthOptions() 会同时启用 Gateway/JWT/Session 三种来源，未配置
+// signing key / session validator 时所有请求都会被 401。接入前需在 server 装配处按实际
+// 鉴权方式构造 AuthOptions（通常只开一种来源），再 Use(middleware.Auth(opts))。也可先
+// 用 NoopAuth() 放行用于联调。
+
 import (
 	"crypto/hmac"
 	"crypto/sha256"
@@ -120,20 +126,20 @@ type SessionOptions struct {
 
 // GatewayOptions configures gateway HMAC authentication.
 type GatewayOptions struct {
-	Enabled            bool
-	Secret             string
-	ClockSkew          time.Duration
-	NonceTTL           time.Duration
-	AllowedAlgorithms  []string
-	UserIDHeader       string
-	IssuerHeader       string
-	AudienceHeader     string
-	ExpiresAtHeader    string
-	SignatureHeader    string
-	TimestampHeader    string
-	NonceHeader        string
-	CanonicalHeaders   []string
-	Validator          GatewaySignatureValidator
+	Enabled           bool
+	Secret            string
+	ClockSkew         time.Duration
+	NonceTTL          time.Duration
+	AllowedAlgorithms []string
+	UserIDHeader      string
+	IssuerHeader      string
+	AudienceHeader    string
+	ExpiresAtHeader   string
+	SignatureHeader   string
+	TimestampHeader   string
+	NonceHeader       string
+	CanonicalHeaders  []string
+	Validator         GatewaySignatureValidator
 }
 
 // ==================== Default Options ====================
@@ -249,7 +255,8 @@ func GetAuthInfo(c *gin.Context) *AuthInfo {
 
 func authenticateGateway(c *gin.Context, opts AuthOptions) (*AuthInfo, error) {
 	gw := opts.Gateway
-	now := opts.Now(); _ = now
+	now := opts.Now()
+	_ = now
 
 	userID := c.GetHeader(gw.UserIDHeader)
 	if userID == "" {
@@ -336,7 +343,8 @@ func computeHMACHex(secret, message string) string {
 
 func authenticateJWT(c *gin.Context, opts AuthOptions) (*AuthInfo, error) {
 	jwtOpts := opts.JWT
-	now := opts.Now(); _ = now
+	now := opts.Now()
+	_ = now
 
 	// Extract token from Authorization header or cookies
 	tokenStr := extractJWTToken(c, jwtOpts)

@@ -1,8 +1,8 @@
 package task
 
 import (
-	"prizeforge/pkg/rabbitmq"
 	"context"
+	"prizeforge/pkg/rabbitmq"
 )
 
 type Repo interface {

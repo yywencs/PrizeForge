@@ -45,7 +45,7 @@ type rediser interface {
 	BLPop(ctx context.Context, timeout time.Duration, keys ...string) *redis.StringSliceCmd
 	Expire(ctx context.Context, key string, expiration time.Duration) *redis.BoolCmd
 	Pipeline() redis.Pipeliner
-		Eval(ctx context.Context, script string, keys []string, args ...interface{}) *redis.Cmd
+	Eval(ctx context.Context, script string, keys []string, args ...interface{}) *redis.Cmd
 }
 
 type Item struct {

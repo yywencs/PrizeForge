@@ -1,11 +1,11 @@
 package activity
 
 import (
-	"prizeforge/internal/metrics"
 	"context"
 	"errors"
 	"fmt"
 	"math/rand"
+	"prizeforge/internal/metrics"
 	"time"
 )
 

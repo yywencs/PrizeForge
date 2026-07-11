@@ -1,5 +1,9 @@
 package middleware
 
+// Status: 已实现，未接入 —— Degrade 中间件当前没有挂进任何 HTTP server。
+// 接入前需提供一个实现 DegradeConfig 的配置来源（例如 viper 降级开关），并在 server
+// 的中间件链里 Use(middleware.Degrade(degradeConfig))。
+
 import (
 	"net/http"
 

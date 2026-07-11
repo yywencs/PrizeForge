@@ -1,7 +1,7 @@
 package po
 
 import (
-	strategybiz "prizeforge/internal/domain/strategy"
+	"prizeforge/internal/domain/strategy"
 	"time"
 )
 
@@ -153,16 +153,16 @@ func (RuleTreeNodeLine) TableName() string {
 	return "rule_tree_node_line"
 }
 
-func (p *Strategy) ToEntity() *strategybiz.Strategy {
-	return &strategybiz.Strategy{
+func (p *Strategy) ToEntity() *strategy.Strategy {
+	return &strategy.Strategy{
 		StrategyID:   p.StrategyID,
 		StrategyDesc: p.StrategyDesc,
 		RuleModels:   p.RuleModels,
 	}
 }
 
-func (p *StrategyAward) ToEntity() *strategybiz.StrategyAward {
-	return &strategybiz.StrategyAward{
+func (p *StrategyAward) ToEntity() *strategy.StrategyAward {
+	return &strategy.StrategyAward{
 		StrategyID:        p.StrategyID,
 		AwardID:           p.AwardID,
 		AwardTitle:        p.AwardTitle,
@@ -175,8 +175,8 @@ func (p *StrategyAward) ToEntity() *strategybiz.StrategyAward {
 	}
 }
 
-func (p *StrategyRule) ToEntity() *strategybiz.StrategyRule {
-	return &strategybiz.StrategyRule{
+func (p *StrategyRule) ToEntity() *strategy.StrategyRule {
+	return &strategy.StrategyRule{
 		StrategyID: p.StrategyID,
 		AwardID:    p.AwardID,
 		RuleType:   p.RuleType,
@@ -186,28 +186,28 @@ func (p *StrategyRule) ToEntity() *strategybiz.StrategyRule {
 	}
 }
 
-func (p *RuleTree) ToEntity() *strategybiz.RuleTree {
-	entity := &strategybiz.RuleTree{
+func (p *RuleTree) ToEntity() *strategy.RuleTree {
+	entity := &strategy.RuleTree{
 		TreeID:           p.TreeID,
 		TreeName:         p.TreeName,
 		TreeDesc:         p.TreeDesc,
-		TreeRootRuleNode: strategybiz.RuleTreeName(p.TreeNodeRuleKey),
+		TreeRootRuleNode: strategy.RuleTreeName(p.TreeNodeRuleKey),
 	}
 	return entity
 }
 
-func (p *RuleTreeNode) ToEntity() *strategybiz.RuleTreeNode {
-	entity := &strategybiz.RuleTreeNode{
+func (p *RuleTreeNode) ToEntity() *strategy.RuleTreeNode {
+	entity := &strategy.RuleTreeNode{
 		TreeID:    p.TreeID,
 		RuleDesc:  p.RuleDesc,
 		RuleValue: p.RuleValue,
-		RuleKey:   strategybiz.RuleTreeName(p.RuleKey),
+		RuleKey:   strategy.RuleTreeName(p.RuleKey),
 	}
 	return entity
 }
 
-func (p *RuleTreeNodeLine) ToEntity() *strategybiz.RuleTreeNodeLine {
-	return &strategybiz.RuleTreeNodeLine{
+func (p *RuleTreeNodeLine) ToEntity() *strategy.RuleTreeNodeLine {
+	return &strategy.RuleTreeNodeLine{
 		TreeID:         p.TreeID,
 		RuleNodeFrom:   p.RuleNodeFrom,
 		RuleNodeTo:     p.RuleNodeTo,
@@ -216,28 +216,28 @@ func (p *RuleTreeNodeLine) ToEntity() *strategybiz.RuleTreeNodeLine {
 	}
 }
 
-func parseRuleLimitType(value string) strategybiz.RuleLimitType {
+func parseRuleLimitType(value string) strategy.RuleLimitType {
 	switch value {
 	case "EQUAL", "equal", "=":
-		return strategybiz.EQUAL
+		return strategy.EQUAL
 	case "GT", "gt", ">":
-		return strategybiz.GT
+		return strategy.GT
 	case "LT", "lt", "<":
-		return strategybiz.LT
+		return strategy.LT
 	case "GE", "ge", ">=":
-		return strategybiz.GE
+		return strategy.GE
 	case "LE", "le", "<=":
-		return strategybiz.LE
+		return strategy.LE
 	}
-	return strategybiz.EQUAL
+	return strategy.EQUAL
 }
 
-func parseRuleLogicCheckType(value string) strategybiz.RuleLogicCheckType {
+func parseRuleLogicCheckType(value string) strategy.RuleLogicCheckType {
 	switch value {
 	case "allow", "ALLOW":
-		return strategybiz.RuleCheckAllow
+		return strategy.RuleCheckAllow
 	case "take_over", "TAKE_OVER":
-		return strategybiz.RuleCheckTakeOver
+		return strategy.RuleCheckTakeOver
 	}
-	return strategybiz.RuleCheckAllow
+	return strategy.RuleCheckAllow
 }

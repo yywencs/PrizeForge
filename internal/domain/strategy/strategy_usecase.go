@@ -1,10 +1,10 @@
 package strategy
 
 import (
-	"prizeforge/internal/metrics"
-	"prizeforge/pkg/logger"
 	"context"
 	"errors"
+	"prizeforge/internal/metrics"
+	"prizeforge/pkg/logger"
 	"time"
 )
 

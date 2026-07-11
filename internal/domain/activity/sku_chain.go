@@ -1,8 +1,8 @@
 package activity
 
 import (
-	"prizeforge/pkg/logger"
 	"context"
+	"prizeforge/pkg/logger"
 	"time"
 )
 

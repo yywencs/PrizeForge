@@ -1,9 +1,9 @@
 package task
 
 import (
-	"prizeforge/pkg/rabbitmq"
 	"context"
 	"encoding/json"
+	"prizeforge/pkg/rabbitmq"
 	"time"
 )
 

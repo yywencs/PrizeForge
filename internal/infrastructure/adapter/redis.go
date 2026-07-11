@@ -1,11 +1,11 @@
 package adapter
 
 import (
-	"prizeforge/pkg/cache"
-	"prizeforge/pkg/config"
 	"context"
 	"encoding/json"
 	"fmt"
+	"prizeforge/pkg/cache"
+	"prizeforge/pkg/config"
 	"time"
 
 	"github.com/redis/go-redis/v9"

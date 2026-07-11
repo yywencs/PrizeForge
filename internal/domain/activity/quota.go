@@ -1,10 +1,10 @@
 package activity
 
 import (
-	"prizeforge/pkg/logger"
 	"context"
 	"fmt"
 	"math/rand"
+	"prizeforge/pkg/logger"
 	"time"
 )
 
