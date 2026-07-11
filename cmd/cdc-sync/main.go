@@ -6,7 +6,7 @@ import (
 	"log"
 	"time"
 
-	"big-market-kratos/internal/cdc"
+	"prizeforge/internal/cdc"
 )
 
 func main() {

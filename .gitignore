@@ -42,7 +42,7 @@ temp/
 .env
 .env.*
 !.env.example
-.config/config.yaml
+configs/config.yaml
 
 # frontend
 frontend/node_modules/

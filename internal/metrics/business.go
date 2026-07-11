@@ -86,3 +86,13 @@ func normalizeLabel(v string) string {
 	}
 	return v
 }
+
+// IncHTTPRequest increments the HTTP request counter.
+func IncHTTPRequest(method, path, code string) {
+	HTTPRequestsTotal.WithLabelValues(method, path, code).Inc()
+}
+
+// ObserveHTTPDuration records HTTP request latency.
+func ObserveHTTPDuration(method, path string, duration time.Duration) {
+	HTTPRequestDuration.WithLabelValues(method, path).Observe(duration.Seconds())
+}
