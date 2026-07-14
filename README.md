@@ -251,7 +251,3 @@ Prometheus 指标覆盖 HTTP、抽奖结果、库存、MQ、Asynq 队列和 MySQ
 | 监控 | Prometheus + Grafana |
 | 数据库 | MySQL（分库分表） |
 | CDC | go-mysql → Elasticsearch |
-
-## License
-
-MIT
