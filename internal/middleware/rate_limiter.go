@@ -9,23 +9,23 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// RateLimiterConfig is the interface for rate limit configuration.
+// RateLimiterConfig 是限流配置的接口。
 type RateLimiterConfig interface {
 	GetRateLimit() int
 }
 
-// RateLimiter returns a Gin middleware stub for rate limiting.
-// TODO: Implement per-user rate limiting using Redis or token bucket.
+// RateLimiter 返回一个用于限流的 Gin 中间件桩（占位实现）。
+// TODO: 使用 Redis 或令牌桶实现按用户维度的限流。
 func RateLimiter(dcc RateLimiterConfig) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if dcc != nil && dcc.GetRateLimit() <= 0 {
 			c.Next()
 			return
 		}
-		// TODO: implement actual rate limiting
+		// TODO: 实现真正的限流逻辑
 		c.Next()
 	}
 }
 
-// Ensure import is used
+// 保证 import 被使用
 var _ = http.StatusTooManyRequests

@@ -21,7 +21,7 @@ func main() {
 
 	apiServer := app.APIServer()
 
-	// Start API HTTP server
+	// 启动 API HTTP 服务
 	go func() {
 		logger.Info("starting API server", "addr", app.Config.Server.API.Addr)
 		if err := apiServer.Run(); err != nil {
@@ -29,7 +29,7 @@ func main() {
 		}
 	}()
 
-	// Start Asynq worker
+	// 启动 Asynq worker
 	go func() {
 		logger.Info("starting Asynq worker")
 		if err := app.AsynqWorker().Start(ctx); err != nil {
@@ -37,7 +37,7 @@ func main() {
 		}
 	}()
 
-	// Start RabbitMQ consumer
+	// 启动 RabbitMQ 消费者
 	go func() {
 		logger.Info("starting RabbitMQ consumer")
 		if err := app.RabbitMQConsumer().Start(ctx); err != nil {
@@ -48,7 +48,7 @@ func main() {
 	<-ctx.Done()
 	logger.Info("shutting down...")
 
-	// Graceful shutdown: HTTP server first (stop accepting new requests)
+	// 优雅关闭：先关闭 HTTP 服务（停止接收新请求）
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer shutdownCancel()
 

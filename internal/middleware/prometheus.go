@@ -8,15 +8,15 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// PrometheusMetrics returns a Gin middleware that records HTTP request metrics.
+// PrometheusMetrics 返回一个用于记录 HTTP 请求指标的 Gin 中间件。
 func PrometheusMetrics() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		start := time.Now()
 
-		// Process request
+		// 处理请求
 		c.Next()
 
-		// Record metrics after response
+		// 在响应完成后记录指标
 		duration := time.Since(start)
 		method := c.Request.Method
 		path := c.FullPath()

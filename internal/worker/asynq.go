@@ -16,7 +16,7 @@ import (
 	"github.com/hibiken/asynq"
 )
 
-// AsynqWorker wraps the Asynq task queue server.
+// AsynqWorker 封装 Asynq 任务队列服务端。
 type AsynqWorker struct {
 	server    *asynq.Server
 	mux       *asynq.ServeMux
@@ -25,7 +25,7 @@ type AsynqWorker struct {
 	queues    []string
 }
 
-// NewAsynqWorker creates an Asynq worker server and registers all task handlers.
+// NewAsynqWorker 创建一个 Asynq worker 服务端，并注册所有任务处理器。
 func NewAsynqWorker(
 	cfg *config.AsynqConfig,
 	skuStockJob *job.ActivitySkuStockConsumeJob,
@@ -120,6 +120,7 @@ func wrapAsynqHandler(taskType string, handler func(context.Context, *asynq.Task
 	}
 }
 
+// startQueueMetricsCollector 启动一个后台 goroutine，定期采集队列指标。
 func (w *AsynqWorker) startQueueMetricsCollector(ctx context.Context) {
 	go func() {
 		w.collectQueueMetrics()
@@ -138,6 +139,7 @@ func (w *AsynqWorker) startQueueMetricsCollector(ctx context.Context) {
 	}()
 }
 
+// collectQueueMetrics 采集各队列的任务积压、重试、调度数量并上报到 Prometheus。
 func (w *AsynqWorker) collectQueueMetrics() {
 	if w.inspector == nil {
 		return
@@ -167,6 +169,7 @@ func (w *AsynqWorker) collectQueueMetrics() {
 	}
 }
 
+// asynqTaskResult 根据任务处理错误返回结果标签（success/skip_retry/error），用于指标统计。
 func asynqTaskResult(err error) string {
 	if errors.Is(err, asynq.SkipRetry) {
 		return "skip_retry"
