@@ -20,7 +20,7 @@ import (
 //
 // Payload 格式为 AwardStockConsumeMessage JSON：
 //
-//	{"strategy_id": 100001, "award_id": 101}
+//	{"strategy_id": 100001, "award_id": 101, "order_id": "000000000001"}
 type StrategyAwardStockConsumeJob struct {
 	svc *strategy.StrategyUsecase
 }
@@ -43,8 +43,8 @@ func (j *StrategyAwardStockConsumeJob) ProcessTask(ctx context.Context, task *as
 		return fmt.Errorf("解析 AwardStockConsumeMessage 失败: %v: %w", err, asynq.SkipRetry)
 	}
 
-	if err := j.svc.UpdateStrategyAwardStock(ctx, msg.StrategyID, msg.AwardID); err != nil {
-		logger.Error("UpdateStrategyAwardStock 失败", "strategyID", msg.StrategyID, "awardID", msg.AwardID, "err", err)
+	if err := j.svc.UpdateStrategyAwardStock(ctx, msg.UserID, msg.OrderID, msg.StrategyID, msg.AwardID); err != nil {
+		logger.Error("UpdateStrategyAwardStock 失败", "orderID", msg.OrderID, "strategyID", msg.StrategyID, "awardID", msg.AwardID, "err", err)
 		return err
 	}
 

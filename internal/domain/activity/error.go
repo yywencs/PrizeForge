@@ -15,6 +15,8 @@ var (
 	ErrDBIndexDuplicate                          = xerr.New("DB_INDEX_DUPLICATE", "数据库索引重复")
 	ErrRecordNotFound                            = xerr.New("RECORD_NOT_FOUND", "记录不存在")
 	ErrClearActivitySkuStockError                = xerr.New("CLEAR_ACTIVITY_SKU_STOCK_ERROR", "清除活动商品库存失败")
+	ErrDrawInProgress                            = xerr.New("DRAW_IN_PROGRESS", "抽奖正在处理中")
+	ErrDrawCancelled                             = xerr.New("DRAW_CANCELLED", "抽奖订单已取消")
 )
 
 var (

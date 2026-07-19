@@ -28,6 +28,12 @@ type Repo interface {
 	QueryRaffleActivity(ctx context.Context, activityID int64) (*Activity, error)
 	// 查询用户未使用的抽奖订单
 	QueryNoUsedRaffleOrder(ctx context.Context, userID string, activityID int64) (*UserRaffleOrder, error)
+	// CreateOrLoadUserRaffleOrder 在同一事务内恢复未完成订单，或扣减数据库额度并创建新订单。
+	CreateOrLoadUserRaffleOrder(ctx context.Context, order *UserRaffleOrder) (*UserRaffleOrder, bool, error)
+	// TryClaimUserRaffleOrder 原子抢占订单执行权；超时的 processing 订单允许被接管。
+	TryClaimUserRaffleOrder(ctx context.Context, userID string, orderID string) (*DrawClaim, error)
+	// ReleaseUserRaffleOrderClaim 将 processing 订单释放为 created，供明确失败后的请求立即重试。
+	ReleaseUserRaffleOrderClaim(ctx context.Context, userID string, orderID string, owner string) error
 	// CacheGetOrCreateNoUsedRaffleOrder 先从缓存复用未使用订单，缺失时原子扣减额度并创建新订单
 	CacheGetOrCreateNoUsedRaffleOrder(ctx context.Context, order *UserRaffleOrder) (*UserRaffleOrder, bool, error)
 	// SaveLiteUserRaffleOrder 同步落一条最小化抽奖订单，并写入异步补额度账 task

@@ -10,6 +10,7 @@ const (
 	strategyRateTableKeyPrefix  = "big_market_strategy_rate_table_key_%s"
 	strategyRateRangeKeyPrefix  = "big_market_strategy_rate_range_key_%s"
 	strategyAwardCountKey       = "big_market_strategy_award_count_key_%d_%d"
+	strategyAwardReservationKey = "big_market_strategy_award_reservation_%s_%s"
 	strategyRuleModelKeyPrefix  = "big_market_strategy_rule_model_%d_%d"
 	strategyRuleValueKeyPrefix  = "big_market_strategy_rule_value_key_%d_%s"
 	ruleTreeKeyPrefix           = "big_market_rule_tree_%s"
@@ -34,6 +35,10 @@ func GetStrategyRateRangeKey(strategyID string) string {
 
 func GetStrategyAwardCountKey(strategyID int64, awardID int64) string {
 	return fmt.Sprintf(strategyAwardCountKey, strategyID, awardID)
+}
+
+func GetStrategyAwardReservationKey(userID string, orderID string) string {
+	return fmt.Sprintf(strategyAwardReservationKey, userID, orderID)
 }
 
 func GetStrategyRuleModelKey(strategyID int64, awardID int64) string {

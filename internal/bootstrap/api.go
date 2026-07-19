@@ -162,7 +162,7 @@ func NewAPIApp() (*HTTPApp, error) {
 	// Asynq jobs
 	skuStockJob := job.NewActivitySkuStockConsumeJob(activityQuotaSvc)
 	dbCount := cfg.Data.Database.DbCount
-	sendAwardMsgJob := job.NewSendAwardMessage(taskSvc, activityPartakeSvc, dbCount)
+	sendAwardMsgJob := job.NewSendAwardMessage(taskSvc, activityPartakeSvc, strategySvc, dbCount)
 	strategyAwardStockJob := job.NewStrategyAwardStockConsumeJob(strategySvc)
 
 	// RabbitMQ listeners

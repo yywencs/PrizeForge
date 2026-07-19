@@ -36,6 +36,8 @@ type ActivityAccount struct {
 	DayCountSurplus   int
 	MonthCount        int
 	MonthCountSurplus int
+	// CurrentOrderID 已扣额度但尚未完成的抽奖订单。空值表示没有进行中的抽奖。
+	CurrentOrderID string
 }
 
 // ActivityAccountMonth 对应月维度活动账户实体
@@ -84,6 +86,8 @@ type ActivityOrder struct {
 type PartakeRaffleActivity struct {
 	UserID     string
 	ActivityID int64
+	// RequestID 由客户端为一次点击生成；同一次点击的所有重试必须复用该值。
+	RequestID string
 }
 
 type UserRaffleOrder struct {
@@ -97,10 +101,18 @@ type UserRaffleOrder struct {
 	StrategyID int64
 	// 订单ID
 	OrderID string
+	// 客户端请求幂等ID
+	RequestID string
 	// 下单时间
 	OrderTime time.Time
 	// 订单状态；create-创建、used-已使用、cancel-已作废
 	OrderState UserRaffleOrderState
+	// 抽奖执行状态；created-待执行、processing-执行中、success-已完成、cancelled-已取消
+	DrawState DrawState
+	// 抢占执行权的时间，用于执行实例宕机后的超时接管
+	ProcessingAt *time.Time
+	// DrawOwner 当前执行者令牌；超时接管后用于阻止旧执行者提交结果。
+	DrawOwner string
 }
 
 type ActivitySku struct {
@@ -154,6 +166,8 @@ type CreatePartakeOrder struct {
 	ActivityAccountDay *ActivityAccountDay
 	// UserRaffleOrder 抽奖单实体
 	UserRaffleOrder *UserRaffleOrder
+	// Reused 是否复用了未消费的 pending 订单（true 表示这是重试/复用路径）
+	Reused bool
 }
 
 type SaveOrderTaskMessage struct {
@@ -221,6 +235,29 @@ func (s UserRaffleOrderState) Desc() string {
 	default:
 		return "未知"
 	}
+}
+
+type DrawState string
+
+const (
+	DrawStateCreated    DrawState = "created"
+	DrawStateProcessing DrawState = "processing"
+	DrawStateSuccess    DrawState = "success"
+	DrawStateCancelled  DrawState = "cancelled"
+)
+
+type DrawClaimStatus string
+
+const (
+	DrawClaimAcquired   DrawClaimStatus = "acquired"
+	DrawClaimProcessing DrawClaimStatus = "processing"
+	DrawClaimCompleted  DrawClaimStatus = "completed"
+	DrawClaimCancelled  DrawClaimStatus = "cancelled"
+)
+
+type DrawClaim struct {
+	Status DrawClaimStatus
+	Owner  string
 }
 
 type AccountSyncState string

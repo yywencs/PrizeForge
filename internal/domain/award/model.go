@@ -34,6 +34,10 @@ type UserAwardRecord struct {
 	AwardTime time.Time
 	// 奖品状态；create-创建、completed-发奖完成
 	AwardState AwardState
+	// StockReserved 仅用于应用层决定是否写入库存同步 outbox，不持久化到中奖表。
+	StockReserved bool
+	// DrawOwner 仅用于第二次事务校验当前执行者，防止超时接管后的旧实例提交。
+	DrawOwner string
 }
 
 // 任务实体

@@ -28,7 +28,7 @@ type Repo interface {
 	QueryStrategyAward(ctx context.Context, strategyID int64, awardID int64) (*StrategyAward, error)
 
 	// UpdateStrategyAwardStock 根据队列消费结果，持久化扣减库存到数据库
-	UpdateStrategyAwardStock(ctx context.Context, strategyID int64, awardID int64) error
+	UpdateStrategyAwardStock(ctx context.Context, userID string, orderID string, strategyID int64, awardID int64) error
 
 	// 根据活动ID查询策略ID
 	QueryStrategyIdByActivityId(ctx context.Context, activityID int64) (int64, error)
@@ -50,7 +50,9 @@ type Repo interface {
 
 	// 库存扣减
 	SubtractionAwardStock(ctx context.Context, strategyID int64, awardID int64) (bool, error)
+	// ReserveAwardStock 使用 orderID 幂等预占库存；返回实际为该订单预占的奖品ID。
+	ReserveAwardStock(ctx context.Context, userID string, orderID string, strategyID int64, awardID int64) (reservedAwardID int64, ok bool, err error)
 
 	// 库存扣减后，发送消息到队列
-	AwardStockConsumeSendQueue(ctx context.Context, strategyID int64, awardID int64) error
+	AwardStockConsumeSendQueue(ctx context.Context, userID string, orderID string, strategyID int64, awardID int64) error
 }

@@ -1,17 +1,20 @@
 package api
 
 import (
+	"errors"
+	"prizeforge/internal/domain/activity"
 	"prizeforge/pkg/logger"
 	"prizeforge/server/http/common"
 
 	"github.com/gin-gonic/gin"
 )
 
-// ---- request DTOs (used only in this file) ----
+// ---- 请求 DTO（仅在本文件内使用） ----
 
 type drawRequest struct {
 	UserID     string `json:"user_id"`
 	ActivityID int64  `json:"activity_id"`
+	RequestID  string `json:"request_id"`
 }
 
 type queryAccountRequest struct {
@@ -19,24 +22,28 @@ type queryAccountRequest struct {
 	ActivityID int64  `json:"activity_id"`
 }
 
-// ---- handlers ----
+// ---- 处理器 ----
 
-// Draw handles POST /api/v1/raffle/activity/draw
-// Full draw flow: create order → perform raffle → save award record.
+// Draw 处理 POST /api/v1/raffle/activity/draw
+// 完整抽奖流程：创建订单 → 执行抽奖 → 保存中奖记录。
 func (s *Server) Draw(c *gin.Context) {
 	var req drawRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		common.Error(c, 400, "invalid request body: "+err.Error())
 		return
 	}
-	if req.UserID == "" || req.ActivityID <= 0 {
-		common.Error(c, 400, "invalid user_id or activity_id")
+	if req.UserID == "" || req.ActivityID <= 0 || req.RequestID == "" || len(req.RequestID) > 64 {
+		common.Error(c, 400, "invalid user_id, activity_id or request_id")
 		return
 	}
 
-	awardID, awardTitle, awardIndex, err := s.activityUsecase.Draw(c.Request.Context(), req.UserID, req.ActivityID)
+	awardID, awardTitle, awardIndex, err := s.activityUsecase.Draw(c.Request.Context(), req.UserID, req.ActivityID, req.RequestID)
 	if err != nil {
 		logger.Error("draw failed", "userID", req.UserID, "activityID", req.ActivityID, "error", err)
+		if errors.Is(err, activity.ErrDrawInProgress) || errors.Is(err, activity.ErrDrawCancelled) {
+			common.Error(c, 409, err.Error())
+			return
+		}
 		common.Error(c, 500, err.Error())
 		return
 	}
@@ -49,7 +56,7 @@ func (s *Server) Draw(c *gin.Context) {
 	})
 }
 
-// CalendarSignRebate handles POST /api/v1/raffle/activity/calendar_sign_rebate
+// CalendarSignRebate 处理 POST /api/v1/raffle/activity/calendar_sign_rebate
 func (s *Server) CalendarSignRebate(c *gin.Context) {
 	userID := c.Query("user_id")
 	if userID == "" {
@@ -67,7 +74,7 @@ func (s *Server) CalendarSignRebate(c *gin.Context) {
 	common.Success(c, CalendarSignRebateResponse{Success: success})
 }
 
-// IsCalendarSignRebate handles POST /api/v1/raffle/activity/is_calendar_sign_rebate
+// IsCalendarSignRebate 处理 POST /api/v1/raffle/activity/is_calendar_sign_rebate
 func (s *Server) IsCalendarSignRebate(c *gin.Context) {
 	userID := c.Query("user_id")
 	if userID == "" {
@@ -85,7 +92,7 @@ func (s *Server) IsCalendarSignRebate(c *gin.Context) {
 	common.Success(c, IsCalendarSignRebateResponse{IsSigned: isSigned})
 }
 
-// QueryUserActivityAccount handles POST /api/v1/raffle/activity/query_user_activity_account
+// QueryUserActivityAccount 处理 POST /api/v1/raffle/activity/query_user_activity_account
 func (s *Server) QueryUserActivityAccount(c *gin.Context) {
 	var req queryAccountRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -115,7 +122,7 @@ func (s *Server) QueryUserActivityAccount(c *gin.Context) {
 	})
 }
 
-// LoadUserActivityAccount handles POST /api/v1/raffle/activity/load_user_activity_account
+// LoadUserActivityAccount 处理 POST /api/v1/raffle/activity/load_user_activity_account
 func (s *Server) LoadUserActivityAccount(c *gin.Context) {
 	var req queryAccountRequest
 	if err := c.ShouldBindJSON(&req); err != nil {

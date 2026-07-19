@@ -33,7 +33,7 @@ func (r *raffleStrategy) raffleLogicChain(ctx context.Context, factor *RaffleFac
 	return logicChain.logic(ctx, factor.UserID, factor.StrategyID)
 }
 
-func (r *raffleStrategy) raffleRuleTree(ctx context.Context, userID string, strategyID int64, awardID int64) (*treeStrategyAward, error) {
+func (r *raffleStrategy) raffleRuleTree(ctx context.Context, orderID string, userID string, strategyID int64, awardID int64) (*treeStrategyAward, error) {
 	ruleModel, err := r.repo.QueryStrategyRuleModel(ctx, strategyID, awardID)
 	if err != nil {
 		return nil, err
@@ -54,7 +54,7 @@ func (r *raffleStrategy) raffleRuleTree(ctx context.Context, userID string, stra
 	if err != nil {
 		return nil, err
 	}
-	return engine.process(strategyID, awardID)
+	return engine.process(ctx, userID, orderID, strategyID, awardID)
 }
 
 func (r *raffleStrategy) queryStrategyAwardList(ctx context.Context, strategyID int64) ([]*StrategyAward, error) {

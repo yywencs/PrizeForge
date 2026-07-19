@@ -8,9 +8,13 @@ import (
 )
 
 type AwardStockConsumeMessage struct {
-	StrategyID int64 `json:"strategy_id"`
-	AwardID    int64 `json:"award_id"`
+	StrategyID int64  `json:"strategy_id"`
+	AwardID    int64  `json:"award_id"`
+	OrderID    string `json:"order_id,omitempty"`
+	UserID     string `json:"user_id,omitempty"`
 }
+
+const AwardStockSyncTopic = "strategy_award_stock_sync"
 
 // ================== Enums ==================
 
@@ -158,6 +162,8 @@ type RaffleAward struct {
 	AwardTitle string
 	//  奖品顺序号
 	Sort int
+	// StockReserved 表示该结果已按订单在 Redis 成功预占库存。
+	StockReserved bool
 }
 
 // 规则树
@@ -225,4 +231,6 @@ type RaffleFactor struct {
 	ActivityID int64
 	UserID     string
 	StrategyID int64
+	// OrderID 为空表示无业务订单的独立策略试抽；正式活动抽奖必须传入。
+	OrderID string
 }

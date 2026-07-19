@@ -68,6 +68,20 @@ type StrategyAward struct {
 	UpdateTime time.Time `gorm:"column:update_time;type:datetime;not null;autoUpdateTime;comment:修改时间"`
 }
 
+// StrategyAwardStockReservation 记录订单对应的数据库库存扣减，供异步任务幂等消费。
+type StrategyAwardStockReservation struct {
+	ID         uint64    `gorm:"column:id;primaryKey;autoIncrement"`
+	UserID     string    `gorm:"column:user_id;type:varchar(32);not null;uniqueIndex:uq_user_order"`
+	OrderID    string    `gorm:"column:order_id;type:varchar(12);not null;uniqueIndex:uq_user_order"`
+	StrategyID int64     `gorm:"column:strategy_id;not null"`
+	AwardID    int64     `gorm:"column:award_id;not null"`
+	CreateTime time.Time `gorm:"column:create_time;type:datetime;not null;autoCreateTime"`
+}
+
+func (StrategyAwardStockReservation) TableName() string {
+	return "strategy_award_stock_reservation"
+}
+
 // 抽奖策略规则表
 type StrategyRule struct {
 	// ID 自增ID

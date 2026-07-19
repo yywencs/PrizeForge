@@ -17,6 +17,8 @@ type Task struct {
 }
 
 type AwardStockConsumeMessage struct {
-	StrategyID int64 `json:"strategy_id"`
-	AwardID    int64 `json:"award_id"`
+	StrategyID int64  `json:"strategy_id"`
+	AwardID    int64  `json:"award_id"`
+	OrderID    string `json:"order_id,omitempty"`
+	UserID     string `json:"user_id,omitempty"`
 }

@@ -92,27 +92,54 @@ func (d *strategyRepository) QueryStrategyAward(ctx context.Context, strategyID 
 	return &strategyAward, nil
 }
 
-// UpdateStrategyAwardStock 根据队列消费结果，持久化扣减库存到数据库
-func (d *strategyRepository) UpdateStrategyAwardStock(ctx context.Context, strategyID int64, awardID int64) error {
-	tx := d.db.WithContext(ctx).
-		Model(&po.StrategyAward{}).
-		Where("strategy_id = ? AND award_id = ? AND award_count_surplus > 0", strategyID, awardID).
-		Update("award_count_surplus", gorm.Expr("award_count_surplus - 1"))
+// UpdateStrategyAwardStock 根据队列消费结果持久化库存；正式抽奖用 orderID 保证重复任务只扣一次。
+func (d *strategyRepository) UpdateStrategyAwardStock(ctx context.Context, userID string, orderID string, strategyID int64, awardID int64) error {
+	if orderID == "" {
+		tx := d.db.WithContext(ctx).
+			Model(&po.StrategyAward{}).
+			Where("strategy_id = ? AND award_id = ? AND award_count_surplus > 0", strategyID, awardID).
+			Update("award_count_surplus", gorm.Expr("award_count_surplus - 1"))
+		if tx.Error != nil {
+			return tx.Error
+		}
+		if tx.RowsAffected == 0 {
+			return errors.New("no stock to consume or record not found")
+		}
+		return nil
+	}
 
-	if tx.Error != nil {
-		return tx.Error
-	}
-	if tx.RowsAffected == 0 {
-		return errors.New("no stock to consume or record not found")
-	}
-	return nil
+	return d.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		reservation := &po.StrategyAwardStockReservation{
+			UserID:     userID,
+			OrderID:    orderID,
+			StrategyID: strategyID,
+			AwardID:    awardID,
+		}
+		if err := tx.Create(reservation).Error; err != nil {
+			if errors.Is(err, gorm.ErrDuplicatedKey) || strings.Contains(err.Error(), "Duplicate entry") {
+				return nil
+			}
+			return err
+		}
+
+		res := tx.Model(&po.StrategyAward{}).
+			Where("strategy_id = ? AND award_id = ? AND award_count_surplus > 0", strategyID, awardID).
+			Update("award_count_surplus", gorm.Expr("award_count_surplus - 1"))
+		if res.Error != nil {
+			return res.Error
+		}
+		if res.RowsAffected == 0 {
+			return errors.New("no stock to consume or record not found")
+		}
+		return nil
+	})
 }
 
 // NewAwardStockConsumeHandler 返回一个可直接用于 ConsumeAwardStockQueue 的处理函数
 func NewAwardStockConsumeHandler(ctx context.Context, repo *strategyRepository) func(msgs []task.AwardStockConsumeMessage) error {
 	return func(msgs []task.AwardStockConsumeMessage) error {
 		for _, m := range msgs {
-			if err := repo.UpdateStrategyAwardStock(ctx, m.StrategyID, m.AwardID); err != nil {
+			if err := repo.UpdateStrategyAwardStock(ctx, m.UserID, m.OrderID, m.StrategyID, m.AwardID); err != nil {
 				return err
 			}
 		}
@@ -259,10 +286,58 @@ func (d *strategyRepository) SubtractionAwardStock(ctx context.Context, strategy
 	return ok, nil
 }
 
-func (d *strategyRepository) AwardStockConsumeSendQueue(ctx context.Context, strategyID int64, awardID int64) error {
+func (d *strategyRepository) ReserveAwardStock(ctx context.Context, userID string, orderID string, strategyID int64, awardID int64) (int64, bool, error) {
+	if orderID == "" {
+		ok, err := d.SubtractionAwardStock(ctx, strategyID, awardID)
+		return awardID, ok, err
+	}
+
+	reservationKey := adapter.GetStrategyAwardReservationKey(userID, orderID)
+	stockKey := adapter.GetStrategyAwardCountKey(strategyID, awardID)
+	const reservationTTL = 30 * 24 * time.Hour
+	script := `
+		local existing = redis.call("GET", KEYS[1])
+		if existing then
+			return {2, existing}
+		end
+
+		local stock = redis.call("GET", KEYS[2])
+		if not stock or tonumber(stock) <= 0 then
+			return {0, ARGV[1]}
+		end
+
+		redis.call("DECR", KEYS[2])
+		redis.call("SET", KEYS[1], ARGV[1], "EX", ARGV[2])
+		return {1, ARGV[1]}
+	`
+	result, err := d.redis.Eval(ctx, script, []string{reservationKey, stockKey},
+		strconv.FormatInt(awardID, 10),
+		strconv.FormatInt(int64(reservationTTL/time.Second), 10),
+	)
+	if err != nil {
+		return 0, false, err
+	}
+	values, ok := result.([]interface{})
+	if !ok || len(values) < 2 {
+		return 0, false, fmt.Errorf("unexpected stock reservation result: %T", result)
+	}
+	status, ok := values[0].(int64)
+	if !ok {
+		return 0, false, fmt.Errorf("unexpected stock reservation status: %T", values[0])
+	}
+	reservedAwardID, err := strconv.ParseInt(fmt.Sprint(values[1]), 10, 64)
+	if err != nil {
+		return 0, false, err
+	}
+	return reservedAwardID, status == 1 || status == 2, nil
+}
+
+func (d *strategyRepository) AwardStockConsumeSendQueue(ctx context.Context, userID string, orderID string, strategyID int64, awardID int64) error {
 	msg := task.AwardStockConsumeMessage{
 		StrategyID: strategyID,
 		AwardID:    awardID,
+		OrderID:    orderID,
+		UserID:     userID,
 	}
 
 	payload, err := json.Marshal(msg)
@@ -271,6 +346,13 @@ func (d *strategyRepository) AwardStockConsumeSendQueue(ctx context.Context, str
 	}
 
 	t := asynq.NewTask(task.TaskTypeStrategyAwardStockConsume, payload)
-	_, err = d.queue.Enqueue(t, asynq.Queue("critical"), asynq.ProcessIn(1*time.Second))
+	options := []asynq.Option{asynq.Queue("critical"), asynq.ProcessIn(1 * time.Second)}
+	if orderID != "" {
+		options = append(options, asynq.TaskID("strategy-award-stock:"+userID+":"+orderID))
+	}
+	_, err = d.queue.Enqueue(t, options...)
+	if errors.Is(err, asynq.ErrTaskIDConflict) {
+		return nil
+	}
 	return err
 }

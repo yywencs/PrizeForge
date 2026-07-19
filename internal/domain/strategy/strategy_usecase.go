@@ -50,16 +50,16 @@ func (s *StrategyUsecase) PerformRaffle(ctx context.Context, factor *RaffleFacto
 
 	// 2. 如果非默认规则（即直接被接管），直接返回奖品
 	if strategyAwardBefore.LogicModel != RuleDefault {
-		return s.buildRaffleAward(ctx, factor.StrategyID, strategyAwardBefore.AwardID)
+		return s.buildRaffleAward(ctx, factor.StrategyID, strategyAwardBefore.AwardID, false)
 	}
 
 	// 3. 执行抽奖规则树
-	strategyAwardAfter, err := s.raffle.raffleRuleTree(ctx, factor.UserID, factor.StrategyID, strategyAwardBefore.AwardID)
+	strategyAwardAfter, err := s.raffle.raffleRuleTree(ctx, factor.OrderID, factor.UserID, factor.StrategyID, strategyAwardBefore.AwardID)
 	if err != nil {
 		return nil, err
 	}
 
-	return s.buildRaffleAward(ctx, factor.StrategyID, strategyAwardAfter.AwardID)
+	return s.buildRaffleAward(ctx, factor.StrategyID, strategyAwardAfter.AwardID, strategyAwardAfter.StockReserved)
 }
 
 func raffleResultFromErr(err error) string {
@@ -91,8 +91,13 @@ func (s *StrategyUsecase) QueryAwardRuleWeightByActivityId(ctx context.Context, 
 }
 
 // buildRaffleAward 构建返回结果
-func (s *StrategyUsecase) UpdateStrategyAwardStock(ctx context.Context, strategyID int64, awardID int64) error {
-	return s.repo.UpdateStrategyAwardStock(ctx, strategyID, awardID)
+func (s *StrategyUsecase) UpdateStrategyAwardStock(ctx context.Context, userID string, orderID string, strategyID int64, awardID int64) error {
+	return s.repo.UpdateStrategyAwardStock(ctx, userID, orderID, strategyID, awardID)
+}
+
+// QueryStrategyAward 查询策略奖品配置（含 Sort），供上层复用已落库中奖结果时补全排序号。
+func (s *StrategyUsecase) QueryStrategyAward(ctx context.Context, strategyID int64, awardID int64) (*StrategyAward, error) {
+	return s.repo.QueryStrategyAward(ctx, strategyID, awardID)
 }
 
 func (s *StrategyUsecase) AssembleLotteryStrategyByActivityId(ctx context.Context, activityID int64) (bool, error) {
@@ -104,14 +109,15 @@ func (s *StrategyUsecase) AssembleLotteryStrategyByActivityId(ctx context.Contex
 }
 
 // buildRaffleAward 构建返回结果
-func (s *StrategyUsecase) buildRaffleAward(ctx context.Context, strategyID int64, awardID int64) (*RaffleAward, error) {
+func (s *StrategyUsecase) buildRaffleAward(ctx context.Context, strategyID int64, awardID int64, stockReserved bool) (*RaffleAward, error) {
 	strategyAward, err := s.repo.QueryStrategyAward(ctx, strategyID, awardID)
 	if err != nil {
 		return nil, err
 	}
 	return &RaffleAward{
-		AwardID:    strategyAward.AwardID,
-		AwardTitle: strategyAward.AwardTitle,
-		Sort:       strategyAward.Sort,
+		AwardID:       strategyAward.AwardID,
+		AwardTitle:    strategyAward.AwardTitle,
+		Sort:          strategyAward.Sort,
+		StockReserved: stockReserved,
 	}, nil
 }

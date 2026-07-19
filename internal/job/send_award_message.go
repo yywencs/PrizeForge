@@ -8,6 +8,7 @@ import (
 
 	"prizeforge/internal/domain/activity"
 	"prizeforge/internal/domain/award"
+	"prizeforge/internal/domain/strategy"
 	"prizeforge/internal/domain/task"
 	"prizeforge/pkg/logger"
 
@@ -27,9 +28,10 @@ import (
 // 注意：类型名 SendAwardMessage 是历史遗留，实际职责是"扫描并分发 task 表消息"，
 // 不限于发奖。考虑到引用点较多暂不改名。
 type SendAwardMessage struct {
-	taskSvc    *task.TaskUsecase
-	partakeSvc *activity.ActivityPartakeUsecase
-	dbCount    int // 分库数量，决定需要扫描多少个数据库
+	taskSvc     *task.TaskUsecase
+	partakeSvc  *activity.ActivityPartakeUsecase
+	strategySvc *strategy.StrategyUsecase
+	dbCount     int // 分库数量，决定需要扫描多少个数据库
 }
 
 // NewSendAwardMessage 创建 SendAwardMessage 定时任务。
@@ -38,15 +40,17 @@ type SendAwardMessage struct {
 func NewSendAwardMessage(
 	taskSvc *task.TaskUsecase,
 	partakeSvc *activity.ActivityPartakeUsecase,
+	strategySvc *strategy.StrategyUsecase,
 	dbCount int,
 ) *SendAwardMessage {
 	if dbCount <= 0 {
 		dbCount = 1
 	}
 	return &SendAwardMessage{
-		taskSvc:    taskSvc,
-		partakeSvc: partakeSvc,
-		dbCount:    dbCount,
+		taskSvc:     taskSvc,
+		partakeSvc:  partakeSvc,
+		strategySvc: strategySvc,
+		dbCount:     dbCount,
 	}
 }
 
@@ -111,6 +115,13 @@ func (j *SendAwardMessage) routeTaskByTopic(ctx context.Context, t *task.Task) e
 			return fmt.Errorf("解析 SaveOrderTaskMessage 失败: %w", err)
 		}
 		return j.partakeSvc.SaveOrderRecord(ctx, message.ToCreatePartakeOrder())
+
+	case strategy.AwardStockSyncTopic:
+		var message strategy.AwardStockConsumeMessage
+		if err := json.Unmarshal([]byte(t.Message), &message); err != nil {
+			return fmt.Errorf("解析 AwardStockConsumeMessage 失败: %w", err)
+		}
+		return j.strategySvc.UpdateStrategyAwardStock(ctx, message.UserID, message.OrderID, message.StrategyID, message.AwardID)
 
 	default:
 		return fmt.Errorf("不支持的任务 topic: %s", t.Topic)

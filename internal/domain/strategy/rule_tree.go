@@ -11,6 +11,7 @@ import (
 type treeStrategyAward struct {
 	AwardID        int64
 	AwardRuleValue string
+	StockReserved  bool
 }
 
 type ruleTreeFactory struct {
@@ -62,7 +63,7 @@ type tree struct {
 }
 
 type ruleNode interface {
-	logic(ctx context.Context, strategyID int64, awardID int64, ruleValue string) (*treeAction, error)
+	logic(ctx context.Context, userID string, orderID string, strategyID int64, awardID int64, ruleValue string) (*treeAction, error)
 }
 
 type ruleTreeEngine struct {
@@ -70,14 +71,14 @@ type ruleTreeEngine struct {
 	RuleTree      *RuleTree
 }
 
-func (e *ruleTreeEngine) process(strategyID int64, awardID int64) (*treeStrategyAward, error) {
+func (e *ruleTreeEngine) process(ctx context.Context, userID string, orderID string, strategyID int64, awardID int64) (*treeStrategyAward, error) {
 	nextNode := e.RuleTree.TreeRootRuleNode
 	strategyAward := &treeStrategyAward{}
 	for nextNode != "" {
 		treeNode := e.RuleTree.NodeMap[nextNode]
 		logicNode := e.TreeNodeGroup[nextNode]
 
-		treeAction, err := logicNode.logic(context.Background(), strategyID, awardID, treeNode.RuleValue)
+		treeAction, err := logicNode.logic(ctx, userID, orderID, strategyID, awardID, treeNode.RuleValue)
 		if err != nil {
 			return nil, err
 		}
@@ -125,7 +126,7 @@ type ruleLockNode struct {
 func newRuleLockNode() ruleNode {
 	return &ruleLockNode{}
 }
-func (r *ruleLockNode) logic(ctx context.Context, strategyID int64, awardID int64, ruleValue string) (*treeAction, error) {
+func (r *ruleLockNode) logic(ctx context.Context, userID string, orderID string, strategyID int64, awardID int64, ruleValue string) (*treeAction, error) {
 	logger.Info("规则过滤-次数锁",
 		"strategyID", strategyID,
 		"awardID", awardID,
@@ -165,7 +166,7 @@ type ruleLuckAwardNode struct {
 func newRuleLuckAwardNode() ruleNode {
 	return &ruleLuckAwardNode{}
 }
-func (r *ruleLuckAwardNode) logic(ctx context.Context, strategyID int64, awardID int64, ruleValue string) (*treeAction, error) {
+func (r *ruleLuckAwardNode) logic(ctx context.Context, userID string, orderID string, strategyID int64, awardID int64, ruleValue string) (*treeAction, error) {
 	logger.Info("规则过滤-兜底奖品",
 		"strategyID", strategyID,
 		"awardID", awardID,
@@ -206,14 +207,21 @@ func newRuleStockNode(repository Repo) ruleNode {
 	return &ruleStockNode{repository: repository}
 }
 
-func (r *ruleStockNode) logic(ctx context.Context, strategyID int64, awardID int64, ruleValue string) (*treeAction, error) {
+func (r *ruleStockNode) logic(ctx context.Context, userID string, orderID string, strategyID int64, awardID int64, ruleValue string) (*treeAction, error) {
 	logger.Info("规则过滤-库存扣减",
 		"strategyID", strategyID,
 		"awardID", awardID,
 		"ruleValue", ruleValue,
 	)
 
-	status, err := r.repository.SubtractionAwardStock(ctx, strategyID, awardID)
+	reservedAwardID := awardID
+	status := false
+	var err error
+	if orderID == "" {
+		status, err = r.repository.SubtractionAwardStock(ctx, strategyID, awardID)
+	} else {
+		reservedAwardID, status, err = r.repository.ReserveAwardStock(ctx, userID, orderID, strategyID, awardID)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -223,16 +231,21 @@ func (r *ruleStockNode) logic(ctx context.Context, strategyID int64, awardID int
 			"strategyID", strategyID,
 			"awardID", awardID,
 		)
-		err = r.repository.AwardStockConsumeSendQueue(ctx, strategyID, awardID)
-		if err != nil {
-			return nil, err
+		// 正式活动订单的库存同步任务会与中奖记录一起写入数据库 outbox；
+		// 无业务订单的独立策略试抽继续使用原 Asynq 路径。
+		if orderID == "" {
+			err = r.repository.AwardStockConsumeSendQueue(ctx, userID, orderID, strategyID, reservedAwardID)
+			if err != nil {
+				return nil, err
+			}
 		}
 
 		return &treeAction{
 			RuleLogicCheckType: RuleCheckAllow,
 			Award: treeStrategyAward{
-				AwardID:        awardID,
+				AwardID:        reservedAwardID,
 				AwardRuleValue: ruleValue,
+				StockReserved:  orderID != "",
 			},
 		}, nil
 	}
