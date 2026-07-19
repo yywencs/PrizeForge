@@ -1,105 +1,120 @@
-GOHOSTOS:=$(shell go env GOHOSTOS)
-GOPATH:=$(shell go env GOPATH)
-VERSION=$(shell git describe --tags --always)
-FRONTEND_DIR=frontend
-BACKEND_CMD=./cmd/big-market-kratos
-BACKEND_CONF=./configs
+GO ?= go
+DOCKER ?= docker
+COMPOSE ?= docker compose
 
-ifeq ($(GOHOSTOS), windows)
-	#the `find.exe` is different from `find` in bash/shell.
-	#to see https://docs.microsoft.com/en-us/windows-server/administration/windows-commands/find.
-	#changed to use git-bash.exe to run find cli or other cli friendly, caused of every developer has a Git.
-	#Git_Bash= $(subst cmd\,bin\bash.exe,$(dir $(shell where git)))
-	Git_Bash=$(subst \,/,$(subst cmd\,bin\bash.exe,$(dir $(shell where git))))
-	INTERNAL_PROTO_FILES=$(shell $(Git_Bash) -c "find internal -name *.proto")
-	API_PROTO_FILES=$(shell $(Git_Bash) -c "find api -name *.proto")
-else
-	INTERNAL_PROTO_FILES=$(shell find internal -name *.proto)
-	API_PROTO_FILES=$(shell find api -name *.proto)
-endif
-
-.PHONY: init
-# init env
-init:
-	go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
-	go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
-	go install github.com/go-kratos/kratos/cmd/kratos/v2@latest
-	go install github.com/go-kratos/kratos/cmd/protoc-gen-go-http/v2@latest
-	go install github.com/google/gnostic/cmd/protoc-gen-openapi@latest
-	go install github.com/google/wire/cmd/wire@latest
-
-.PHONY: config
-# generate internal proto
-config:
-	protoc --proto_path=./internal \
-	       --proto_path=./third_party \
- 	       --go_out=paths=source_relative:./internal \
-	       $(INTERNAL_PROTO_FILES)
-
-.PHONY: api
-# generate api proto
-api:
-	protoc --proto_path=./api \
-	       --proto_path=./third_party \
- 	       --go_out=paths=source_relative:./api \
- 	       --go-http_out=paths=source_relative:./api \
- 	       --go-grpc_out=paths=source_relative:./api \
-	       --openapi_out=fq_schema_naming=true,default_response=false:. \
-	       $(API_PROTO_FILES)
-
-.PHONY: build
-# build
-build:
-	mkdir -p bin/ && go build -ldflags "-X main.Version=$(VERSION)" -o ./bin/ ./...
-
-.PHONY: frontend-install
-# install frontend deps
-frontend-install:
-	cd $(FRONTEND_DIR) && npm install
-
-.PHONY: frontend-dev
-# run frontend dev server
-frontend-dev:
-	cd $(FRONTEND_DIR) && npm run dev
-
-.PHONY: backend-dev
-# run backend dev server
-backend-dev:
-	go run $(BACKEND_CMD) -conf $(BACKEND_CONF)
-
-.PHONY: frontend-build
-# build frontend
-frontend-build:
-	cd $(FRONTEND_DIR) && npm run build
-
-.PHONY: generate
-# generate
-generate:
-	go generate ./...
-	go mod tidy
-
-.PHONY: all
-# generate all
-all:
-	make api
-	make config
-	make generate
-
-# show help
-help:
-	@echo ''
-	@echo 'Usage:'
-	@echo ' make [target]'
-	@echo ''
-	@echo 'Targets:'
-	@awk '/^[a-zA-Z\-\_0-9]+:/ { \
-	helpMessage = match(lastLine, /^# (.*)/); \
-		if (helpMessage) { \
-			helpCommand = substr($$1, 0, index($$1, ":")); \
-			helpMessage = substr(lastLine, RSTART + 2, RLENGTH); \
-			printf "\033[36m%-22s\033[0m %s\n", helpCommand,helpMessage; \
-		} \
-	} \
-	{ lastLine = $$0 }' $(MAKEFILE_LIST)
+BIN_DIR ?= bin
+IMAGE_PREFIX ?= prizeforge
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || printf 'dev')
+LDFLAGS ?= -s -w
 
 .DEFAULT_GOAL := help
+
+.PHONY: help
+help: ## 显示可用命令
+	@awk 'BEGIN {FS = ":.*## "; printf "Usage: make <target>\n\nTargets:\n"} /^[a-zA-Z0-9_.-]+:.*## / {printf "  \033[36m%-22s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
+
+.PHONY: fmt
+fmt: ## 格式化 Go 代码
+	$(GO) fmt ./...
+
+.PHONY: fmt-check
+fmt-check: ## 检查是否存在未格式化的 Go 文件
+	@files="$$(gofmt -l $$(find . -type f -name '*.go' -not -path './vendor/*'))"; \
+	if [ -n "$$files" ]; then \
+		printf '%s\n' "以下文件需要执行 gofmt:" "$$files"; \
+		exit 1; \
+	fi
+
+.PHONY: vet
+vet: ## 运行 Go 静态检查
+	$(GO) vet ./...
+
+.PHONY: test
+test: ## 运行全部测试
+	$(GO) test ./...
+
+.PHONY: test-race
+test-race: ## 使用竞态检测运行全部测试
+	$(GO) test -race ./...
+
+.PHONY: test-cover
+test-cover: ## 生成测试覆盖率报告 coverage.html
+	$(GO) test -coverprofile=coverage.out ./...
+	$(GO) tool cover -html=coverage.out -o coverage.html
+	$(GO) tool cover -func=coverage.out
+
+.PHONY: check
+check: fmt-check vet test ## 执行格式、静态检查和测试
+
+.PHONY: build
+build: build-api build-admin build-cdc ## 构建全部服务
+
+.PHONY: build-api
+build-api: ## 构建 API 服务
+	@mkdir -p $(BIN_DIR)
+	CGO_ENABLED=0 $(GO) build -trimpath -ldflags="$(LDFLAGS)" -o $(BIN_DIR)/prizeforge-api ./cmd/api
+
+.PHONY: build-admin
+build-admin: ## 构建 Admin 服务
+	@mkdir -p $(BIN_DIR)
+	CGO_ENABLED=0 $(GO) build -trimpath -ldflags="$(LDFLAGS)" -o $(BIN_DIR)/prizeforge-admin ./cmd/admin
+
+.PHONY: build-cdc
+build-cdc: ## 构建 CDC Sync 服务
+	@mkdir -p $(BIN_DIR)
+	CGO_ENABLED=0 $(GO) build -trimpath -ldflags="$(LDFLAGS)" -o $(BIN_DIR)/prizeforge-cdc-sync ./cmd/cdc-sync
+
+.PHONY: run-api
+run-api: ## 本地启动 API 服务
+	$(GO) run ./cmd/api
+
+.PHONY: run-admin
+run-admin: ## 本地启动 Admin 服务
+	$(GO) run ./cmd/admin
+
+.PHONY: run-cdc
+run-cdc: ## 本地启动 CDC Sync 服务（配置来自 CDC_* 环境变量）
+	$(GO) run ./cmd/cdc-sync
+
+.PHONY: docker-build
+docker-build: docker-build-api docker-build-admin docker-build-cdc ## 构建全部 Docker 镜像
+
+.PHONY: docker-build-api
+docker-build-api: ## 构建 API Docker 镜像
+	$(DOCKER) build --target api -t $(IMAGE_PREFIX)-api:$(VERSION) .
+
+.PHONY: docker-build-admin
+docker-build-admin: ## 构建 Admin Docker 镜像
+	$(DOCKER) build --target admin -t $(IMAGE_PREFIX)-admin:$(VERSION) .
+
+.PHONY: docker-build-cdc
+docker-build-cdc: ## 构建 CDC Sync Docker 镜像
+	$(DOCKER) build --target cdc-sync -t $(IMAGE_PREFIX)-cdc-sync:$(VERSION) .
+
+.PHONY: compose-config
+compose-config: ## 校验并渲染 Compose 配置
+	$(COMPOSE) config
+
+.PHONY: infra-up
+infra-up: ## 启动 MySQL、Redis 和 RabbitMQ
+	$(COMPOSE) up -d mysql redis rabbitmq
+
+.PHONY: monitoring-up
+monitoring-up: ## 启动 Prometheus、Grafana 和 MySQL Exporter
+	$(COMPOSE) up -d prometheus grafana mysql-exporter
+
+.PHONY: search-up
+search-up: ## 启动 Elasticsearch、Kibana 和 CDC Sync
+	$(COMPOSE) up -d elasticsearch kibana cdc-sync
+
+.PHONY: down
+down: ## 停止 Compose 服务
+	$(COMPOSE) down
+
+.PHONY: logs
+logs: ## 跟踪 Compose 日志
+	$(COMPOSE) logs --tail=200 -f
+
+.PHONY: clean
+clean: ## 清理本地构建产物和覆盖率报告
+	rm -rf $(BIN_DIR) coverage.out coverage.html

@@ -1,45 +1,63 @@
-FROM golang:1.24 AS builder
+# syntax=docker/dockerfile:1
+
+FROM golang:1.25-bookworm AS builder
 
 WORKDIR /src
 
 COPY go.mod go.sum ./
-RUN GOPROXY=https://goproxy.cn go mod download
+RUN --mount=type=cache,target=/go/pkg/mod \
+    go mod download
 
 COPY . .
 
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags "-X main.Version=docker" -o /out/big-market-kratos ./cmd/big-market-kratos
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /out/cdc-sync ./cmd/cdc-sync
+ARG TARGETOS=linux
+ARG TARGETARCH
 
-FROM debian:stable-slim AS server
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
+    go build -trimpath -ldflags="-s -w" -o /out/prizeforge-api ./cmd/api
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-        ca-certificates \
-        netbase \
-        && rm -rf /var/lib/apt/lists/* \
-        && apt-get autoremove -y \
-        && apt-get autoclean -y
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
+    go build -trimpath -ldflags="-s -w" -o /out/prizeforge-admin ./cmd/admin
 
-COPY --from=builder /out/big-market-kratos /app/big-market-kratos
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
+    go build -trimpath -ldflags="-s -w" -o /out/prizeforge-cdc-sync ./cmd/cdc-sync
 
-WORKDIR /app
+FROM debian:bookworm-slim AS runtime
 
-EXPOSE 8000
-EXPOSE 9000
-VOLUME /data/conf
-
-CMD ["./big-market-kratos", "-conf", "/data/conf"]
-
-FROM debian:stable-slim AS cdc-sync
-
-RUN apt-get update && apt-get install -y --no-install-recommends \
-        ca-certificates \
-        netbase \
-        && rm -rf /var/lib/apt/lists/* \
-        && apt-get autoremove -y \
-        && apt-get autoclean -y
-
-COPY --from=builder /out/cdc-sync /app/cdc-sync
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates tzdata \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd --gid 10001 prizeforge \
+    && useradd --uid 10001 --gid prizeforge --no-create-home --shell /usr/sbin/nologin prizeforge \
+    && mkdir -p /app/configs /app/logs \
+    && chown -R prizeforge:prizeforge /app
 
 WORKDIR /app
 
-CMD ["./cdc-sync"]
+ENV TZ=Asia/Shanghai
+
+USER prizeforge
+STOPSIGNAL SIGTERM
+
+# CDC 从环境变量读取配置，不依赖 configs/config.yaml。
+FROM runtime AS cdc-sync
+COPY --from=builder --chown=prizeforge:prizeforge /out/prizeforge-cdc-sync /usr/local/bin/prizeforge-cdc-sync
+ENTRYPOINT ["prizeforge-cdc-sync"]
+
+# Admin 从 /app/configs/config.yaml 读取配置。
+FROM runtime AS admin
+COPY --from=builder --chown=prizeforge:prizeforge /out/prizeforge-admin /usr/local/bin/prizeforge-admin
+EXPOSE 8081
+ENTRYPOINT ["prizeforge-admin"]
+
+# API 从 /app/configs/config.yaml 读取配置；最后一个 stage 也是默认构建目标。
+FROM runtime AS api
+COPY --from=builder --chown=prizeforge:prizeforge /out/prizeforge-api /usr/local/bin/prizeforge-api
+EXPOSE 8080
+ENTRYPOINT ["prizeforge-api"]
