@@ -48,17 +48,16 @@ sequenceDiagram
     participant DB as MySQL
     participant MQ as RabbitMQ/Asynq
 
-    C->>S: Draw(user_id, activity_id)
+    C->>S: Draw(user_id, activity_id, request_id)
     S->>A: 创建或复用抽奖订单
-    A->>R: Lua 扣减总/月/日额度并写 pending order
-    R-->>A: 新订单或复用未使用订单
-    A->>DB: 保存用户抽奖订单
+    A->>DB: 事务扣减总/月/日额度并创建订单
+    A->>DB: CAS 抢占 created → processing
     S->>ST: 执行抽奖策略
     ST->>R: 命中预热策略和库存缓存
     ST->>ST: 前置规则链 + 概率区间 + 后置规则树
-    ST->>R: 扣减奖品或 SKU 库存
-    S->>DB: 保存中奖记录和 task
-    S->>MQ: 投递发奖 / 库存同步任务
+    ST->>R: 按 user_id + order_id 幂等预占奖品库存
+    S->>DB: 事务保存中奖记录、发奖/库存 task、订单 success
+    DB->>MQ: task 扫描器异步投递发奖 / 同步库存
     MQ-->>DB: 异步更新状态或重试失败任务
     S-->>C: award_id / award_title
 ```
@@ -179,7 +178,7 @@ curl "http://localhost:8080/api/v1/raffle/strategy/armory?strategy_id=100001"
 ```bash
 curl -X POST "http://localhost:8080/api/v1/raffle/activity/draw" \
   -H "Content-Type: application/json" \
-  -d '{"user_id":"10001","activity_id":100301}'
+  -d '{"user_id":"10001","activity_id":100301,"request_id":"01K0DRAWEXAMPLE000000000001"}'
 ```
 
 查询用户活动账户：
@@ -200,13 +199,13 @@ curl -X POST "http://localhost:8080/api/v1/raffle/activity/calendar_sign_rebate"
 
 ## 设计取舍
 
-### Redis Lua 保证热点链路原子性
+### MySQL 订单真相源，Redis 承担热点策略和库存
 
-用户额度和库存扣减都属于高并发热点路径。项目将额度检查、扣减、pending order 写入合并到 Lua 脚本中执行，避免应用层多次 Redis 往返和并发窗口问题。
+用户额度与抽奖订单在同一个 MySQL 事务内提交，保证失败可恢复；Redis Lua 负责奖品库存预占，并以 `user_id + order_id` 做幂等。Redis 丢失只影响热点能力，不改变订单和中奖结果的最终真相。
 
 ### 订单先占用，发奖最终一致
 
-抽奖入口优先保证用户额度、库存和订单状态不重复消费；中奖记录和发奖任务通过 task 表、RabbitMQ、Asynq 继续推进。缩短核心接口响应路径，但需要处理任务状态、重复消费、失败重试和补偿。
+接口同步完成两次事务：第一次扣额度并创建订单，第二次保存中奖结果、发奖 task、库存同步 task 和成功状态。实际发奖、数据库库存同步通过 task 表、RabbitMQ、Asynq 异步推进。
 
 ### 规则链 + 规则树拆分前后置逻辑
 
