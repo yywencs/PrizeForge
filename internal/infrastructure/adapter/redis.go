@@ -15,6 +15,7 @@ import (
 func NewRedisClient(cfg *config.RedisConfig) *cache.Cache {
 	opts := &redis.Options{
 		Addr:            fmt.Sprintf("%s:%d", cfg.Host, cfg.Port),
+		Password:        cfg.Password,
 		DB:              cfg.DB,
 		PoolSize:        cfg.PoolSize,
 		MinIdleConns:    cfg.MinIdleSize,

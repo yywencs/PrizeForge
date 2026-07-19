@@ -2,7 +2,7 @@ package config
 
 import (
 	"fmt"
-	"log/slog"
+	"strings"
 
 	"github.com/spf13/viper"
 )
@@ -17,13 +17,18 @@ func InitViperConfig() {
 
 	v.AddConfigPath("configs")
 	v.AddConfigPath(".")
+	v.SetEnvPrefix("PRIZEFORGE")
+	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_", "-", "_"))
+	v.AutomaticEnv()
 
 	// 读取配置文件
 	if err := v.ReadInConfig(); err != nil {
 		panic(fmt.Errorf("fatal error config file: %w", err))
 	}
 
-	if err := v.Unmarshal(&Conf); err != nil {
-		slog.Error("Unable to decode into struct.", "err", err)
+	var cfg Config
+	if err := v.Unmarshal(&cfg); err != nil {
+		panic(fmt.Errorf("decode config: %w", err))
 	}
+	Conf = &cfg
 }
