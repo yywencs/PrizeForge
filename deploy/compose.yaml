@@ -1,0 +1,127 @@
+name: prizeforge
+
+x-app-environment: &app-environment
+  TZ: Asia/Shanghai
+  PRIZEFORGE_DATA_MYSQL_DSN: root:${MYSQL_ROOT_PASSWORD:?MYSQL_ROOT_PASSWORD is required}@tcp(mysql:3306)/big_market%s?charset=utf8mb4&parseTime=True&loc=Local&timeout=10s
+  PRIZEFORGE_DATA_REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
+  PRIZEFORGE_ASYNQ_REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
+  PRIZEFORGE_RABBITMQ_USERNAME: ${RABBITMQ_USER:-prizeforge}
+  PRIZEFORGE_RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD is required}
+
+services:
+  mysql:
+    image: mysql:8.4.6
+    restart: unless-stopped
+    environment:
+      TZ: Asia/Shanghai
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?MYSQL_ROOT_PASSWORD is required}
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_0900_ai_ci
+      - --innodb-buffer-pool-size=384M
+      - --max-connections=100
+    volumes:
+      - mysql-data:/var/lib/mysql
+      - ./sql/big_market.sql:/docker-entrypoint-initdb.d/10-big-market.sql:ro
+      - ./sql/big_market_01.sql:/docker-entrypoint-initdb.d/20-big-market-01.sql:ro
+      - ./sql/big_market_02.sql:/docker-entrypoint-initdb.d/30-big-market-02.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$${MYSQL_ROOT_PASSWORD} --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    mem_limit: 1g
+    networks:
+      - backend
+
+  redis:
+    image: redis:7.4.9-alpine
+    restart: unless-stopped
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+      - --requirepass
+      - ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$${REDIS_PASSWORD}\" ping | grep -q PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    mem_limit: 256m
+    networks:
+      - backend
+
+  rabbitmq:
+    image: rabbitmq:4.2.8-alpine
+    restart: unless-stopped
+    environment:
+      TZ: Asia/Shanghai
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-prizeforge}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD is required}
+      RABBITMQ_VM_MEMORY_HIGH_WATERMARK: "0.6"
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    mem_limit: 512m
+    networks:
+      - backend
+
+  api:
+    image: ${ACR_REGISTRY:?ACR_REGISTRY is required}/${ACR_NAMESPACE:?ACR_NAMESPACE is required}/prizeforge-api:${IMAGE_TAG:?IMAGE_TAG is required}
+    restart: unless-stopped
+    init: true
+    environment: *app-environment
+    ports:
+      - 127.0.0.1:8080:8080
+    volumes:
+      - ./configs/config.yaml:/app/configs/config.yaml:ro
+      - ./logs/api:/app/logs
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    mem_limit: 512m
+    networks:
+      - backend
+
+  admin:
+    image: ${ACR_REGISTRY:?ACR_REGISTRY is required}/${ACR_NAMESPACE:?ACR_NAMESPACE is required}/prizeforge-admin:${IMAGE_TAG:?IMAGE_TAG is required}
+    restart: unless-stopped
+    init: true
+    environment: *app-environment
+    ports:
+      - 127.0.0.1:8081:8081
+    volumes:
+      - ./configs/config.yaml:/app/configs/config.yaml:ro
+      - ./logs/admin:/app/logs
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    mem_limit: 256m
+    networks:
+      - backend
+
+networks:
+  backend:
+    driver: bridge
+
+volumes:
+  mysql-data:
+  redis-data:
+  rabbitmq-data:

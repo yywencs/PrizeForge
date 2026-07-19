@@ -1,0 +1,78 @@
+server:
+  api:
+    addr: 0.0.0.0:8080
+    timeout: 60s
+  admin:
+    addr: 0.0.0.0:8081
+    timeout: 60s
+
+rabbitmq:
+  addresses: rabbitmq
+  port: 5672
+  username: prizeforge
+  password: overridden_by_environment
+  listener:
+    simple:
+      prefetch: 1
+  topic:
+    activity_sku_stock_zero: activity_sku_stock_zero
+    send_award: send_award
+    send_rebate: send_rebate
+    save_order_record: save_order_record
+
+data:
+  mysql:
+    dsn: overridden_by_environment
+    max_open_conns: 20
+    max_idle_conns: 10
+    max_life_time: 1800s
+    max_idle_time: 180s
+    db_count: 2
+    tb_count: 4
+  redis:
+    host: redis
+    port: 6379
+    password: overridden_by_environment
+    db: 0
+    pool_size: 10
+    min_idle_size: 2
+    idle_timeout: 30000
+    connect_timeout: 5000
+    retry_attempts: 3
+    retry_interval: 1000
+    ping_interval: 60000
+    keep_alive: true
+
+asynq:
+  redis:
+    host: redis
+    port: 6379
+    password: overridden_by_environment
+    db: 1
+    pool_size: 10
+    min_idle_size: 2
+    idle_timeout: 30000
+    connect_timeout: 5000
+    retry_attempts: 3
+    retry_interval: 1000
+    ping_interval: 60000
+    keep_alive: true
+  concurrency: 5
+
+log:
+  level: info
+  filename: ./logs/app.log
+  max_size: 50
+  max_backups: 3
+  max_age: 14
+  compress: true
+
+dcc:
+  rate_limit: 5
+  enable_degrade: false
+  black_list: ""
+
+monitor:
+  enable: false
+  addr: 0.0.0.0:9091
+  path: /metrics
