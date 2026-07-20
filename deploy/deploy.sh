@@ -1,28 +1,34 @@
 #!/usr/bin/env bash
 
+# 遇到命令失败、未定义变量或管道中的任一错误时立即退出，并让 ERR trap 在函数中生效。
 set -Eeuo pipefail
 
+# 从位置参数读取目标镜像标签和部署目录，并允许通过环境变量调整健康检查策略。
 readonly TARGET_TAG="${1:-}"
 readonly DEPLOY_PATH="${2:-}"
 readonly HEALTHCHECK_ATTEMPTS="${HEALTHCHECK_ATTEMPTS:-60}"
 readonly HEALTHCHECK_INTERVAL_SECONDS="${HEALTHCHECK_INTERVAL_SECONDS:-5}"
 
+# 镜像标签必须符合 v主版本.次版本.修订版本 的格式，例如 v1.2.3。
 if [[ ! "${TARGET_TAG}" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
 	echo "invalid image tag: ${TARGET_TAG}" >&2
 	exit 2
 fi
 
+# 部署目录必须是一个已经存在的绝对路径。
 if [[ -z "${DEPLOY_PATH}" || "${DEPLOY_PATH}" != /* || ! -d "${DEPLOY_PATH}" ]]; then
 	echo "invalid deploy path: ${DEPLOY_PATH}" >&2
 	exit 2
 fi
 
+# 重试次数必须为正整数，重试间隔必须为非负整数。
 if [[ ! "${HEALTHCHECK_ATTEMPTS}" =~ ^[1-9][0-9]*$ ]] ||
 	[[ ! "${HEALTHCHECK_INTERVAL_SECONDS}" =~ ^[0-9]+$ ]]; then
 	echo "invalid health check retry configuration" >&2
 	exit 2
 fi
 
+# 提前确认部署流程依赖的命令均已安装，避免部署到一半才失败。
 for command_name in awk curl docker flock mktemp; do
 	if ! command -v "${command_name}" >/dev/null 2>&1; then
 		echo "required command is missing: ${command_name}" >&2
@@ -30,35 +36,42 @@ for command_name in awk curl docker flock mktemp; do
 	fi
 done
 
+# 后续所有相对路径和 Compose 操作都以部署目录为工作目录。
 cd "${DEPLOY_PATH}"
 
 readonly ENV_FILE="${DEPLOY_PATH}/.env"
 readonly COMPOSE_FILE="${DEPLOY_PATH}/compose.yaml"
 
+# .env 会在部署时被修改，因此必须存在且可写。
 if [[ ! -f "${ENV_FILE}" || ! -w "${ENV_FILE}" ]]; then
 	echo ".env is missing or not writable: ${ENV_FILE}" >&2
 	exit 2
 fi
 
+# Compose 配置文件必须存在且可读。
 if [[ ! -f "${COMPOSE_FILE}" || ! -r "${COMPOSE_FILE}" ]]; then
 	echo "compose file is missing or not readable: ${COMPOSE_FILE}" >&2
 	exit 2
 fi
 
+# 使用非阻塞文件锁保证同一部署目录同一时间只运行一个部署任务。
 exec 9>"${DEPLOY_PATH}/.deploy.lock"
 if ! flock -n 9; then
 	echo "another deployment is already running" >&2
 	exit 3
 fi
 
+# 将公共的 Compose 参数保存为数组，避免重复拼接命令和参数展开问题。
 readonly -a COMPOSE=(docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}")
 
+# .env 中必须且只能存在一个 IMAGE_TAG，防止更新到错误的配置项。
 image_tag_lines="$(awk -F= '$1 == "IMAGE_TAG" { count++ } END { print count+0 }' "${ENV_FILE}")"
 if [[ "${image_tag_lines}" != "1" ]]; then
 	echo ".env must contain exactly one IMAGE_TAG entry" >&2
 	exit 2
 fi
 
+# 保存部署前的镜像标签，后续部署失败时用它进行回滚。
 previous_tag="$(awk -F= '$1 == "IMAGE_TAG" { sub(/^[^=]*=/, ""); print }' "${ENV_FILE}")"
 if [[ -z "${previous_tag}" ]]; then
 	echo "current IMAGE_TAG is empty" >&2
@@ -68,6 +81,7 @@ fi
 env_temp_file=""
 rollback_needed=0
 
+# 通过临时文件原子替换 .env 中的 IMAGE_TAG，并保留原文件权限。
 write_image_tag() {
 	local image_tag="$1"
 	env_temp_file="$(mktemp "${DEPLOY_PATH}/.env.XXXXXX")"
@@ -80,6 +94,7 @@ write_image_tag() {
 	env_temp_file=""
 }
 
+# 部署失败后恢复旧镜像标签，并重新启动旧版本的 API 和 Admin 服务。
 rollback() {
 	echo "deployment failed; rolling back to ${previous_tag}" >&2
 	write_image_tag "${previous_tag}"
@@ -90,6 +105,7 @@ rollback() {
 	echo "IMAGE_TAG restored to ${previous_tag}" >&2
 }
 
+# 脚本退出时清理残留临时文件；若新版本已经写入，则自动执行回滚。
 on_exit() {
 	local exit_code=$?
 	trap - EXIT
@@ -103,6 +119,7 @@ on_exit() {
 }
 trap on_exit EXIT
 
+# 轮询 API 和 Admin 的存活、就绪端点，全部通过后才认为部署成功。
 wait_until_ready() {
 	local -a endpoints=(
 		"http://127.0.0.1:8080/healthz"
@@ -112,6 +129,7 @@ wait_until_ready() {
 	)
 
 	local attempt endpoint all_ready
+	# 每一轮依次访问全部端点；任一端点失败都会进入下一轮重试。
 	for ((attempt = 1; attempt <= HEALTHCHECK_ATTEMPTS; attempt++)); do
 		all_ready=1
 		for endpoint in "${endpoints[@]}"; do
@@ -127,6 +145,7 @@ wait_until_ready() {
 		sleep "${HEALTHCHECK_INTERVAL_SECONDS}"
 	done
 
+	# 超过最大重试次数后输出每个端点的响应，便于定位具体失败服务。
 	echo "health checks did not pass before timeout" >&2
 	for endpoint in "${endpoints[@]}"; do
 		echo "--- ${endpoint}" >&2
@@ -136,25 +155,35 @@ wait_until_ready() {
 	return 1
 }
 
+# 在修改线上配置前，先验证目标标签对应的 Compose 配置是否合法。
 echo "validating Compose configuration for ${TARGET_TAG}"
 IMAGE_TAG="${TARGET_TAG}" "${COMPOSE[@]}" config --quiet
+
+# 在修改 .env 前准备本次启动所需的全部镜像，任何镜像失败都会保持旧标签不变。
+# 基础设施镜像版本固定，仅在服务器缺失时拉取；API/Admin 每次拉取目标版本以确认制品存在。
+echo "preparing infrastructure images"
+IMAGE_TAG="${TARGET_TAG}" "${COMPOSE[@]}" pull --policy missing mysql redis rabbitmq
 
 echo "pulling API and Admin images for ${TARGET_TAG}"
 IMAGE_TAG="${TARGET_TAG}" "${COMPOSE[@]}" pull api admin
 
+# 从这里开始发生失败时需要回滚到 previous_tag。
 echo "updating IMAGE_TAG from ${previous_tag} to ${TARGET_TAG}"
 rollback_needed=1
 write_image_tag "${TARGET_TAG}"
 
+# 使用新镜像标签重新创建并在后台启动两个服务。
 echo "starting API and Admin"
 "${COMPOSE[@]}" up -d api admin
 
+# 健康检查失败时输出容器状态和最近日志，随后退出并由 EXIT trap 触发回滚。
 if ! wait_until_ready; then
 	"${COMPOSE[@]}" ps >&2 || true
 	"${COMPOSE[@]}" logs --tail=100 api admin >&2 || true
 	exit 1
 fi
 
+# 新版本已通过全部检查，关闭回滚标记并输出最终容器状态。
 rollback_needed=0
 echo "deployment of ${TARGET_TAG} succeeded"
 "${COMPOSE[@]}" ps api admin

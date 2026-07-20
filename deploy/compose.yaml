@@ -10,7 +10,7 @@ x-app-environment: &app-environment
 
 services:
   mysql:
-    image: mysql:8.4.6
+    image: ${ACR_REGISTRY:?ACR_REGISTRY is required}/${ACR_NAMESPACE:?ACR_NAMESPACE is required}/prizeforge-mysql:8.4.6
     restart: unless-stopped
     environment:
       TZ: Asia/Shanghai
@@ -36,7 +36,7 @@ services:
       - backend
 
   redis:
-    image: redis:7.4.9-alpine
+    image: ${ACR_REGISTRY:?ACR_REGISTRY is required}/${ACR_NAMESPACE:?ACR_NAMESPACE is required}/prizeforge-redis:7.4.9-alpine
     restart: unless-stopped
     environment:
       REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
@@ -58,13 +58,12 @@ services:
       - backend
 
   rabbitmq:
-    image: rabbitmq:4.2.8-alpine
+    image: ${ACR_REGISTRY:?ACR_REGISTRY is required}/${ACR_NAMESPACE:?ACR_NAMESPACE is required}/prizeforge-rabbitmq:4.2.8-alpine
     restart: unless-stopped
     environment:
       TZ: Asia/Shanghai
       RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-prizeforge}
       RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD is required}
-      RABBITMQ_VM_MEMORY_HIGH_WATERMARK: "0.6"
     volumes:
       - rabbitmq-data:/var/lib/rabbitmq
     healthcheck:
