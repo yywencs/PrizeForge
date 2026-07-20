@@ -54,6 +54,7 @@ func (r *DBRouter) DBStrategy(shardKey string) (*gorm.DB, string) {
 	size := int64(r.dbCount * r.tbCount)
 	idx := int64(hashVal) % size
 	dbIdx := idx/int64(r.tbCount) + 1
+	tableIdx := idx % int64(r.tbCount)
 
 	dbKey := fmt.Sprintf("%02d", dbIdx)
 	db := r.dbMap[dbKey]
@@ -61,7 +62,7 @@ func (r *DBRouter) DBStrategy(shardKey string) (*gorm.DB, string) {
 		return nil, ""
 	}
 
-	return db, fmt.Sprintf("%03d", idx)
+	return db, fmt.Sprintf("%03d", tableIdx)
 }
 
 // GetDB returns a DB instance by shard index.

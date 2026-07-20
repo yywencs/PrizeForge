@@ -9,6 +9,8 @@ import (
 	"time"
 )
 
+const failedTaskRetryDelay = 6 * time.Minute
+
 type TaskRepository struct {
 	routerDB  *adapter.DBRouter
 	publisher *adapter.Publisher
@@ -25,13 +27,14 @@ func (r *TaskRepository) QueryNoSendMessageTaskList(ctx context.Context, dbIndx 
 	const limit = 10
 
 	db := r.routerDB.GetDB(dbIndx).WithContext(ctx)
-	timeoutAt := time.Now().Add(-6 * time.Minute)
+	retryBefore := time.Now().Add(-failedTaskRetryDelay)
 	columns := []string{"user_id", "topic", "message_id", "message"}
 
+	// 失败任务只有经过退避时间后才允许重试，避免下游故障时每轮调度反复发送。
 	var tasks []po.Task
 	err := db.
 		Select(columns).
-		Where("state = ?", "fail").
+		Where("state = ? AND update_time < ?", "fail", retryBefore).
 		Order("update_time ASC, id ASC").
 		Limit(limit).
 		Find(&tasks).Error
@@ -40,10 +43,11 @@ func (r *TaskRepository) QueryNoSendMessageTaskList(ctx context.Context, dbIndx 
 	}
 
 	if len(tasks) < limit {
+		// 新建任务尚未尝试过，应在下一轮调度立即发送，不需要等待失败退避时间。
 		var createTasks []po.Task
 		err = db.
 			Select(columns).
-			Where("state = ? AND update_time < ?", "create", timeoutAt).
+			Where("state = ?", "create").
 			Order("update_time ASC, id ASC").
 			Limit(limit - len(tasks)).
 			Find(&createTasks).Error
