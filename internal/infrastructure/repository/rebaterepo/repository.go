@@ -5,18 +5,18 @@ import (
 	"errors"
 	"fmt"
 	"prizeforge/internal/domain/rebate"
-	"prizeforge/internal/infrastructure/adapter"
 	"prizeforge/internal/infrastructure/repository/po"
 	"prizeforge/pkg/rabbitmq"
 	"time"
 
+	mysqlDriver "github.com/go-sql-driver/mysql"
 	"gorm.io/gorm"
 )
 
 type rebateRepository struct {
 	db        *gorm.DB
 	routerDB  databaseRouter
-	publisher *adapter.Publisher
+	publisher rebatePublisher
 }
 
 // databaseRouter 定义返利仓储选择用户分片所需的最小路由能力。
@@ -24,7 +24,12 @@ type databaseRouter interface {
 	DBStrategy(string) (*gorm.DB, string)
 }
 
-func NewRebateRepository(db *gorm.DB, routerDB databaseRouter, publisher *adapter.Publisher) rebate.Repo {
+// rebatePublisher 定义返利订单提交后发布领域消息所需的最小能力。
+type rebatePublisher interface {
+	PublishSendRebate(context.Context, *rabbitmq.BaseEvent) error
+}
+
+func NewRebateRepository(db *gorm.DB, routerDB databaseRouter, publisher rebatePublisher) rebate.Repo {
 	return &rebateRepository{
 		db:        db,
 		routerDB:  routerDB,
@@ -72,8 +77,8 @@ func (r *rebateRepository) SaveUserRebateOrder(ctx context.Context, userId strin
 
 			tableName := fmt.Sprintf("user_behavior_rebate_order_%s", tableSuffix)
 			if err := tx.Table(tableName).Create(&po).Error; err != nil {
-				if errors.Is(err, gorm.ErrDuplicatedKey) {
-					return nil
+				if isDuplicateKeyError(err) {
+					continue
 				}
 				return err
 			}
@@ -96,10 +101,20 @@ func (r *rebateRepository) SaveUserRebateOrder(ctx context.Context, userId strin
 
 		event := rabbitmq.NewBaseEvent(msg)
 
-		_ = r.publisher.PublishSendRebate(ctx, event)
+		if err := r.publisher.PublishSendRebate(ctx, event); err != nil {
+			return err
+		}
 	}
 
 	return nil
+}
+
+func isDuplicateKeyError(err error) bool {
+	if errors.Is(err, gorm.ErrDuplicatedKey) {
+		return true
+	}
+	var mysqlErr *mysqlDriver.MySQLError
+	return errors.As(err, &mysqlErr) && mysqlErr.Number == 1062
 }
 
 func (r *rebateRepository) QueryUserRebateOrder(ctx context.Context, userId string, outBusinessNo string) ([]*rebate.BehaviorRebateOrder, error) {
