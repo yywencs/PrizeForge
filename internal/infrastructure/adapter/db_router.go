@@ -1,6 +1,7 @@
 package adapter
 
 import (
+	"context"
 	"fmt"
 	"hash/crc32"
 	"prizeforge/pkg/config"
@@ -27,7 +28,7 @@ func NewDBRouter(cfg *config.DatabaseConfig) *DBRouter {
 
 	for i := 1; i <= dbCount; i++ {
 		dbName := fmt.Sprintf("_%02d", i)
-		dsn := fmt.Sprintf(cfg.Dsn, dbName)
+		dsn := resolveDatabaseDSN(cfg.Dsn, dbName)
 
 		subConf := &config.DatabaseConfig{
 			Dsn:          dsn,
@@ -72,4 +73,22 @@ func (r *DBRouter) GetDB(dbIdx int) *gorm.DB {
 // GetDBCount returns the number of DB shards.
 func (r *DBRouter) GetDBCount() int {
 	return r.dbCount
+}
+
+// Ping verifies that every configured database shard is reachable.
+func (r *DBRouter) Ping(ctx context.Context) error {
+	for i := 1; i <= r.dbCount; i++ {
+		db := r.GetDB(i)
+		if db == nil {
+			return fmt.Errorf("database shard %02d is not configured", i)
+		}
+		sqlDB, err := db.DB()
+		if err != nil {
+			return fmt.Errorf("get database shard %02d: %w", i, err)
+		}
+		if err := sqlDB.PingContext(ctx); err != nil {
+			return fmt.Errorf("ping database shard %02d: %w", i, err)
+		}
+	}
+	return nil
 }

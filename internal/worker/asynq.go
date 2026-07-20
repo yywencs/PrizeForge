@@ -33,8 +33,9 @@ func NewAsynqWorker(
 	strategyAwardStockJob *job.StrategyAwardStockConsumeJob,
 ) *AsynqWorker {
 	redisOpt := asynq.RedisClientOpt{
-		Addr: fmt.Sprintf("%s:%d", cfg.Redis.Host, cfg.Redis.Port),
-		DB:   cfg.Redis.DB,
+		Addr:     fmt.Sprintf("%s:%d", cfg.Redis.Host, cfg.Redis.Port),
+		Password: cfg.Redis.Password,
+		DB:       cfg.Redis.DB,
 	}
 
 	server := asynq.NewServer(

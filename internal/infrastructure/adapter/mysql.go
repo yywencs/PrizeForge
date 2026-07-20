@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"prizeforge/internal/metrics"
 	"prizeforge/pkg/config"
+	"strings"
 	"time"
 
 	"gorm.io/driver/mysql"
@@ -14,9 +15,15 @@ import (
 
 // NewDB creates a GORM DB connection from config.
 func NewDB(cfg *config.DatabaseConfig) *gorm.DB {
-	db, sqlDB := openMySQLDB(cfg)
+	defaultCfg := *cfg
+	defaultCfg.Dsn = resolveDatabaseDSN(cfg.Dsn, "")
+	db, sqlDB := openMySQLDB(&defaultCfg)
 	startMySQLStatsCollector(sqlDB, "default", "primary")
 	return db
+}
+
+func resolveDatabaseDSN(dsnTemplate, suffix string) string {
+	return strings.Replace(dsnTemplate, "%s", suffix, 1)
 }
 
 // openMySQLDB opens a MySQL connection using GORM.

@@ -46,6 +46,7 @@ type rediser interface {
 	Expire(ctx context.Context, key string, expiration time.Duration) *redis.BoolCmd
 	Pipeline() redis.Pipeliner
 	Eval(ctx context.Context, script string, keys []string, args ...interface{}) *redis.Cmd
+	Ping(ctx context.Context) *redis.StatusCmd
 }
 
 type Item struct {
@@ -516,6 +517,14 @@ func (cd *Cache) Eval(ctx context.Context, script string, keys []string, args ..
 		return nil, errRedisLocalCacheNil
 	}
 	return cd.opt.Redis.Eval(ctx, script, keys, args...).Result()
+}
+
+// Ping verifies that the backing Redis instance is reachable.
+func (cd *Cache) Ping(ctx context.Context) error {
+	if cd.opt.Redis == nil {
+		return errRedisLocalCacheNil
+	}
+	return cd.opt.Redis.Ping(ctx).Err()
 }
 
 // Pipeline returns a Redis pipeline for batch operations.

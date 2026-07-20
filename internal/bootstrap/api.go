@@ -1,6 +1,8 @@
 package bootstrap
 
 import (
+	"context"
+	"errors"
 	"fmt"
 
 	"prizeforge/internal/application/admin"
@@ -25,6 +27,7 @@ import (
 	httpserver "prizeforge/server/http"
 	adminhttp "prizeforge/server/http/admin"
 	apihttp "prizeforge/server/http/api"
+	"prizeforge/server/http/common"
 
 	"github.com/hibiken/asynq"
 	"gorm.io/gorm"
@@ -109,7 +112,7 @@ func NewAdminApp() *HTTPApp {
 	cfg := b.cfg
 
 	adminStrategyUsecase := admin.NewStrategyUsecase(b.strategySvc)
-	adminServer := adminhttp.NewServer(resolveAdminAddr(cfg), adminStrategyUsecase)
+	adminServer := adminhttp.NewServer(resolveAdminAddr(cfg), adminStrategyUsecase, baseReadinessChecks(b))
 
 	return &HTTPApp{
 		Config:      cfg,
@@ -178,7 +181,17 @@ func NewAPIApp() (*HTTPApp, error) {
 	apiStrategyUsecase := api.NewStrategyUsecase(strategySvc)
 	apiActivityUsecase := api.NewActivityUsecase(activityPartakeSvc, activityQuotaSvc, stockManager, strategySvc, awardSvc, rebateSvc)
 
-	apiServer := apihttp.NewServer(resolveAPIAddr(cfg), apiStrategyUsecase, apiActivityUsecase)
+	readinessChecks := baseReadinessChecks(b)
+	readinessChecks["asynq_redis"] = func(context.Context) error {
+		return asynqClient.Ping()
+	}
+	readinessChecks["rabbitmq"] = func(context.Context) error {
+		if conn.IsClosed() {
+			return errors.New("rabbitmq connection is closed")
+		}
+		return nil
+	}
+	apiServer := apihttp.NewServer(resolveAPIAddr(cfg), apiStrategyUsecase, apiActivityUsecase, readinessChecks)
 
 	return &HTTPApp{
 		Config:           cfg,
@@ -199,6 +212,22 @@ func (a *HTTPApp) AsynqWorker() *worker.AsynqWorker { return a.asynqWorker }
 
 // RabbitMQConsumer returns the RabbitMQ consumer（仅 NewAPIApp 路径非 nil）。
 func (a *HTTPApp) RabbitMQConsumer() *listener.RabbitMQConsumer { return a.rabbitMQConsumer }
+
+func baseReadinessChecks(b *baseDeps) common.ReadinessChecks {
+	return common.ReadinessChecks{
+		"mysql": func(ctx context.Context) error {
+			sqlDB, err := b.gormDB.DB()
+			if err != nil {
+				return fmt.Errorf("get default database: %w", err)
+			}
+			if err := sqlDB.PingContext(ctx); err != nil {
+				return fmt.Errorf("ping default database: %w", err)
+			}
+			return b.dbRouter.Ping(ctx)
+		},
+		"redis": b.redis.Ping,
+	}
+}
 
 func resolveAPIAddr(cfg *config.Config) string {
 	if cfg != nil && cfg.Server.API.Addr != "" {

@@ -7,6 +7,7 @@ import (
 
 	"prizeforge/internal/application/api"
 	"prizeforge/internal/middleware"
+	"prizeforge/server/http/common"
 
 	"github.com/gin-gonic/gin"
 )
@@ -17,19 +18,27 @@ type Server struct {
 	addr            string
 	strategyUsecase *api.StrategyUsecase
 	activityUsecase *api.ActivityUsecase
+	readinessChecks common.ReadinessChecks
 }
 
-func NewServer(addr string, strategyUsecase *api.StrategyUsecase, activityUsecase *api.ActivityUsecase) *Server {
+func NewServer(
+	addr string,
+	strategyUsecase *api.StrategyUsecase,
+	activityUsecase *api.ActivityUsecase,
+	readinessChecks common.ReadinessChecks,
+) *Server {
 	s := &Server{
 		engine:          gin.New(),
 		addr:            addr,
 		strategyUsecase: strategyUsecase,
 		activityUsecase: activityUsecase,
+		readinessChecks: readinessChecks,
 	}
 
 	s.engine.Use(gin.Recovery())
 	s.engine.Use(middleware.CORS())
 	s.engine.Use(middleware.PrometheusMetrics())
+	common.RegisterHealthRoutes(s.engine, s.readinessChecks)
 	s.registerRoutes()
 	return s
 }

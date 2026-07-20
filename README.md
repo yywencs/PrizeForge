@@ -165,6 +165,15 @@ go run ./cmd/cdc-sync/
 | Prometheus | `http://localhost:9090` |
 | Grafana | `http://localhost:3000` |
 
+API 与 Admin 都提供以下健康检查：
+
+| 路径 | 用途 |
+| --- | --- |
+| `/healthz` | 仅确认 HTTP 进程存活，不访问外部依赖 |
+| `/readyz` | 确认服务所需的 MySQL、Redis 等依赖可用；不可用时返回 `503` |
+
+API 的就绪检查覆盖 MySQL（默认库及全部分片）、业务 Redis、Asynq Redis 和 RabbitMQ；Admin 覆盖 MySQL 与业务 Redis。
+
 ### 5. 接口示例
 
 活动装配（预热策略到缓存）：
