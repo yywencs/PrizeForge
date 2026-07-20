@@ -15,11 +15,16 @@ import (
 
 type rebateRepository struct {
 	db        *gorm.DB
-	routerDB  *adapter.DBRouter
+	routerDB  databaseRouter
 	publisher *adapter.Publisher
 }
 
-func NewRebateRepository(db *gorm.DB, routerDB *adapter.DBRouter, publisher *adapter.Publisher) rebate.Repo {
+// databaseRouter 定义返利仓储选择用户分片所需的最小路由能力。
+type databaseRouter interface {
+	DBStrategy(string) (*gorm.DB, string)
+}
+
+func NewRebateRepository(db *gorm.DB, routerDB databaseRouter, publisher *adapter.Publisher) rebate.Repo {
 	return &rebateRepository{
 		db:        db,
 		routerDB:  routerDB,
@@ -99,9 +104,12 @@ func (r *rebateRepository) SaveUserRebateOrder(ctx context.Context, userId strin
 
 func (r *rebateRepository) QueryUserRebateOrder(ctx context.Context, userId string, outBusinessNo string) ([]*rebate.BehaviorRebateOrder, error) {
 	db, tableSuffix := r.routerDB.DBStrategy(userId)
+	if db == nil {
+		return nil, rebate.ErrDBRouterNotFound
+	}
 	var list []*po.UserBehaviorRebateOrder
 	err := db.WithContext(ctx).Table("user_behavior_rebate_order_"+tableSuffix).
-		Where("user_id = ? AND biz_id LIKE ?", userId, outBusinessNo+"%").
+		Where("user_id = ? AND out_business_no = ?", userId, outBusinessNo).
 		Find(&list).Error
 	if err != nil {
 		return nil, err
