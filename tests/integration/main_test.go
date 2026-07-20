@@ -118,3 +118,11 @@ func closeIntegrationDatabases() {
 		}
 	}
 }
+
+func deleteIntegrationRows(t *testing.T, db *gorm.DB, tableName, columnName string, value any) {
+	t.Helper()
+	statement := fmt.Sprintf("DELETE FROM `%s` WHERE `%s` = ?", tableName, columnName)
+	if err := db.Exec(statement, value).Error; err != nil {
+		t.Errorf("cleanup integration table %s: %v", tableName, err)
+	}
+}

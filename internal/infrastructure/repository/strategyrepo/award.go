@@ -117,6 +117,18 @@ func (d *strategyRepository) UpdateStrategyAwardStock(ctx context.Context, userI
 		}
 		if err := tx.Create(reservation).Error; err != nil {
 			if errors.Is(err, gorm.ErrDuplicatedKey) || strings.Contains(err.Error(), "Duplicate entry") {
+				var existing po.StrategyAwardStockReservation
+				if queryErr := tx.
+					Where("user_id = ? AND order_id = ?", userID, orderID).
+					First(&existing).Error; queryErr != nil {
+					return fmt.Errorf("query existing stock reservation: %w", queryErr)
+				}
+				if existing.StrategyID != strategyID || existing.AwardID != awardID {
+					return fmt.Errorf(
+						"stock reservation conflict for user %q order %q: existing strategy=%d award=%d, requested strategy=%d award=%d",
+						userID, orderID, existing.StrategyID, existing.AwardID, strategyID, awardID,
+					)
+				}
 				return nil
 			}
 			return err

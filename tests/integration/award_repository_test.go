@@ -5,7 +5,6 @@ package integration
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"testing"
 	"time"
 
@@ -134,14 +133,6 @@ func newIntegrationAwardUsecase() *award.AwardUsecase {
 	})
 	repository := awardrepo.NewUserAwardRecordRepository(integrationDBRouter, localCache, nil)
 	return award.NewAwardUsecase(repository)
-}
-
-func deleteIntegrationRows(t *testing.T, db *gorm.DB, tableName, columnName string, value any) {
-	t.Helper()
-	statement := fmt.Sprintf("DELETE FROM `%s` WHERE `%s` = ?", tableName, columnName)
-	if err := db.Exec(statement, value).Error; err != nil {
-		t.Errorf("cleanup integration table %s: %v", tableName, err)
-	}
 }
 
 // TestAwardRepositoryCommitsAwardAndOutboxAtomically 验证真实 MySQL 事务会同时写入中奖记录、
