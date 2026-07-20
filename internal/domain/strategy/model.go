@@ -121,7 +121,10 @@ func (sr *StrategyRule) GetRuleWeightValues() (map[string][]int64, error) {
 			continue
 		}
 
-		parts := strings.Split(ruleValue, common.COLON)
+		parts := strings.SplitN(ruleValue, common.COLON, 2)
+		if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+			return nil, ErrRuleWeightValueInvalidFormat.WithMetadata(map[string]string{"rule_value": ruleValue})
+		}
 		key, valueString := parts[0], parts[1]
 
 		var values []int64
