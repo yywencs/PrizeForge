@@ -10,14 +10,33 @@ import (
 )
 
 type ActivityPartakeUsecase struct {
-	repo Repo
+	repo PartakeRepository
+	now  func() time.Time
 }
 
-func NewActivityPartakeUsecase(repo Repo) *ActivityPartakeUsecase {
-	return &ActivityPartakeUsecase{repo: repo}
+// PartakeRepository 定义参与抽奖用例实际需要的最小仓储能力。
+// 具体仓储仍可实现完整 Repo；这里使用窄接口降低领域服务耦合并便于测试。
+type PartakeRepository interface {
+	QueryRaffleActivity(ctx context.Context, activityID int64) (*Activity, error)
+	CreateOrLoadUserRaffleOrder(ctx context.Context, order *UserRaffleOrder) (*UserRaffleOrder, bool, error)
+	TryClaimUserRaffleOrder(ctx context.Context, userID string, orderID string) (*DrawClaim, error)
+	ReleaseUserRaffleOrderClaim(ctx context.Context, userID string, orderID string, owner string) error
+	SaveCreatePartakeOrderAggregate(ctx context.Context, aggregate *CreatePartakeOrder) error
+}
+
+func NewActivityPartakeUsecase(repo PartakeRepository) *ActivityPartakeUsecase {
+	return &ActivityPartakeUsecase{
+		repo: repo,
+		now:  time.Now,
+	}
 }
 
 func (s *ActivityPartakeUsecase) CreateOrder(ctx context.Context, partake *PartakeRaffleActivity) (aggregate *CreatePartakeOrder, err error) {
+	if partake == nil {
+		metrics.IncActivityQuota(0, quotaCheckResultFromErr(ErrInvalidParams))
+		return nil, ErrInvalidParams
+	}
+
 	userID, activityID, requestID := partake.UserID, partake.ActivityID, partake.RequestID
 	defer func() {
 		metrics.IncActivityQuota(activityID, quotaCheckResultFromErr(err))
@@ -25,11 +44,14 @@ func (s *ActivityPartakeUsecase) CreateOrder(ctx context.Context, partake *Parta
 	if userID == "" || activityID <= 0 || requestID == "" {
 		return nil, ErrInvalidParams
 	}
-	currentTime := time.Now()
+	currentTime := s.now()
 
 	activity, err := s.repo.QueryRaffleActivity(ctx, activityID)
 	if err != nil {
 		return nil, err
+	}
+	if activity == nil {
+		return nil, ErrRecordNotFound
 	}
 
 	// 检验活动状态
