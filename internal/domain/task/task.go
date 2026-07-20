@@ -9,11 +9,13 @@ import (
 
 type TaskUsecase struct {
 	taskRepository Repo
+	now            func() time.Time
 }
 
 func NewTaskUsecase(taskRepository Repo) *TaskUsecase {
 	return &TaskUsecase{
 		taskRepository: taskRepository,
+		now:            time.Now,
 	}
 }
 
@@ -30,7 +32,7 @@ func (s *TaskUsecase) SendMessage(ctx context.Context, task *Task) error {
 
 	event := &rabbitmq.BaseEvent{
 		ID:        task.MessageID,
-		Timestamp: time.Now(),
+		Timestamp: s.now(),
 		Data:      data,
 	}
 

@@ -15,6 +15,24 @@ import (
 	"github.com/hibiken/asynq"
 )
 
+// outboxTaskService 定义 Outbox 调度器查询、发送和更新任务状态所需的能力。
+type outboxTaskService interface {
+	QueryNoSendMessageTaskList(context.Context, int) ([]*task.Task, error)
+	SendMessage(context.Context, *task.Task) error
+	UpdateTaskSendMessageCompleted(context.Context, string, string) error
+	UpdateTaskSendMessageFail(context.Context, string, string) error
+}
+
+// partakeOrderService 定义保存异步抽奖订单任务所需的能力。
+type partakeOrderService interface {
+	SaveOrderRecord(context.Context, *activity.CreatePartakeOrder) error
+}
+
+// awardStockService 定义同步策略奖品库存任务所需的能力。
+type awardStockService interface {
+	UpdateStrategyAwardStock(context.Context, string, string, int64, int64) error
+}
+
 // SendAwardMessage 定时扫描 task 表，将未发送的消息按 topic 分发。
 //
 // 这是一个定时任务（由 Asynq Scheduler 每 5 秒触发），不是消费型任务。
@@ -28,9 +46,9 @@ import (
 // 注意：类型名 SendAwardMessage 是历史遗留，实际职责是"扫描并分发 task 表消息"，
 // 不限于发奖。考虑到引用点较多暂不改名。
 type SendAwardMessage struct {
-	taskSvc     *task.TaskUsecase
-	partakeSvc  *activity.ActivityPartakeUsecase
-	strategySvc *strategy.StrategyUsecase
+	taskSvc     outboxTaskService
+	partakeSvc  partakeOrderService
+	strategySvc awardStockService
 	dbCount     int // 分库数量，决定需要扫描多少个数据库
 }
 
@@ -38,9 +56,9 @@ type SendAwardMessage struct {
 //
 // dbCount 为分库数量，<= 0 时默认为 1。
 func NewSendAwardMessage(
-	taskSvc *task.TaskUsecase,
-	partakeSvc *activity.ActivityPartakeUsecase,
-	strategySvc *strategy.StrategyUsecase,
+	taskSvc outboxTaskService,
+	partakeSvc partakeOrderService,
+	strategySvc awardStockService,
 	dbCount int,
 ) *SendAwardMessage {
 	if dbCount <= 0 {
