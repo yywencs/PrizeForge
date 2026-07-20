@@ -44,7 +44,11 @@ test-cover: ## 生成测试覆盖率报告 coverage.html
 	$(GO) tool cover -func=coverage.out
 
 .PHONY: check
-check: fmt-check vet test ## 执行格式、静态检查和测试
+check: fmt-check vet test test-deploy ## 执行格式、静态检查和测试
+
+.PHONY: test-deploy
+test-deploy: ## 测试生产部署脚本的发布与回滚流程
+	bash ./deploy/deploy_test.sh
 
 .PHONY: build
 build: build-api build-admin build-cdc ## 构建全部服务

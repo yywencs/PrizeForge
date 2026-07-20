@@ -206,6 +206,14 @@ curl -X POST "http://localhost:8080/api/v1/raffle/activity/calendar_sign_rebate"
   -d '{"user_id":"10001"}'
 ```
 
+## 生产部署
+
+`.github/workflows/deploy-production.yml` 提供手动生产部署。工作流从 `production` Environment 读取 SSH 配置，将 `deploy/deploy.sh` 通过标准输入发送到服务器执行，不在服务器拉取或编译源码。
+
+部署脚本会依次校验 Compose、拉取指定版本的 API/Admin 镜像、更新 `.env` 中的 `IMAGE_TAG`、启动服务，并等待两个进程的 `/healthz` 和 `/readyz` 全部通过。失败时恢复原来的 `IMAGE_TAG` 并重新创建 API/Admin 容器；数据库和中间件数据不会被修改。
+
+首次使用时，在 GitHub Actions 中选择 `Deploy production`，输入已经推送到 ACR 的稳定版本号（例如 `v1.0.1`）。工作流仅接受 `v主版本.次版本.修订版本` 格式，不接受 `latest`。
+
 ## 设计取舍
 
 ### MySQL 订单真相源，Redis 承担热点策略和库存
