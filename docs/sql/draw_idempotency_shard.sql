@@ -1,4 +1,4 @@
--- Run this migration in every sharded database (for example big_market_01 and big_market_02).
+-- Run this migration in every sharded database (for example prizeforge_01 and prizeforge_02).
 -- Back up the database and verify index names before applying it to an existing environment.
 
 ALTER TABLE `raffle_activity_account`

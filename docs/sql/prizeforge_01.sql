@@ -5,7 +5,7 @@
 # https://sequel-ace.com/
 # https://github.com/Sequel-Ace/Sequel-Ace
 #
-# 数据库: big_market_01
+# 数据库: prizeforge_01
 # 生成时间: 2026-01-21 11:26:18 +0000
 # ************************************************************
 
@@ -17,8 +17,8 @@ SET NAMES utf8mb4;
 /*!40014 SET @OLD_FOREIGN_KEY_CHECKS=@@FOREIGN_KEY_CHECKS, FOREIGN_KEY_CHECKS=0 */;
 /*!40101 SET @OLD_SQL_MODE='NO_AUTO_VALUE_ON_ZERO', SQL_MODE='NO_AUTO_VALUE_ON_ZERO' */;
 /*!40111 SET @OLD_SQL_NOTES=@@SQL_NOTES, SQL_NOTES=0 */;
-CREATE database if NOT EXISTS `big_market_01` default character set utf8mb4;
-use `big_market_01`;
+CREATE database if NOT EXISTS `prizeforge_01` default character set utf8mb4;
+use `prizeforge_01`;
 
 
 # 转储表 raffle_activity_account

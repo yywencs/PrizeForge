@@ -1,6 +1,11 @@
 GO ?= go
 DOCKER ?= docker
 COMPOSE ?= docker compose
+INTEGRATION_COMPOSE ?= $(COMPOSE) -f compose.integration.yaml
+INTEGRATION_MYSQL_PASSWORD ?= prizeforge-integration
+INTEGRATION_MYSQL_PORT ?= 13306
+export INTEGRATION_MYSQL_PASSWORD
+export INTEGRATION_MYSQL_PORT
 
 BIN_DIR ?= bin
 IMAGE_PREFIX ?= prizeforge
@@ -42,6 +47,33 @@ test-cover: ## 生成测试覆盖率报告 coverage.html
 	$(GO) test -coverprofile=coverage.out ./...
 	$(GO) tool cover -html=coverage.out -o coverage.html
 	$(GO) tool cover -func=coverage.out
+
+.PHONY: integration-up
+integration-up: ## 启动并等待临时 MySQL 集成测试环境就绪
+	$(INTEGRATION_COMPOSE) up -d --wait mysql
+
+.PHONY: integration-db-check
+integration-db-check: ## 验证集成测试分库和返利表已经初始化
+	@db_count="$$( $(INTEGRATION_COMPOSE) exec -T mysql sh -ec 'mysql -uroot -p"$$MYSQL_ROOT_PASSWORD" -Nse "SELECT COUNT(*) FROM information_schema.schemata WHERE schema_name IN ('"'"'prizeforge'"'"', '"'"'prizeforge_01'"'"', '"'"'prizeforge_02'"'"')"' )"; \
+	rebate_config_count="$$( $(INTEGRATION_COMPOSE) exec -T mysql sh -ec 'mysql -uroot -p"$$MYSQL_ROOT_PASSWORD" -Nse "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = '"'"'prizeforge'"'"' AND table_name = '"'"'daily_behavior_rebate'"'"'"' )"; \
+	rebate_order_table_count="$$( $(INTEGRATION_COMPOSE) exec -T mysql sh -ec 'mysql -uroot -p"$$MYSQL_ROOT_PASSWORD" -Nse "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema IN ('"'"'prizeforge_01'"'"', '"'"'prizeforge_02'"'"') AND table_name LIKE '"'"'user_behavior_rebate_order_%'"'"'"' )"; \
+	test "$$db_count" = "3"; \
+	test "$$rebate_config_count" = "1"; \
+	test "$$rebate_order_table_count" = "8"; \
+	printf '%s\n' "integration MySQL schema is ready"
+
+.PHONY: integration-down
+integration-down: ## 销毁临时集成测试环境及其数据
+	$(INTEGRATION_COMPOSE) down --volumes --remove-orphans
+
+.PHONY: integration-test
+integration-test: ## 启动临时 MySQL、运行集成测试并自动销毁环境
+	@set -eu; \
+	INTEGRATION_MYSQL_PASSWORD='$(INTEGRATION_MYSQL_PASSWORD)' INTEGRATION_MYSQL_PORT='$(INTEGRATION_MYSQL_PORT)' $(INTEGRATION_COMPOSE) up -d --wait mysql; \
+	trap '$(INTEGRATION_COMPOSE) down --volumes --remove-orphans' EXIT; \
+	$(MAKE) integration-db-check; \
+	PRIZEFORGE_INTEGRATION_MYSQL_DSN='root:$(INTEGRATION_MYSQL_PASSWORD)@tcp(127.0.0.1:$(INTEGRATION_MYSQL_PORT))/prizeforge%s?charset=utf8mb4&parseTime=True&loc=Local&timeout=5s' \
+		$(GO) test -tags=integration ./tests/integration/... -count=1
 
 .PHONY: check
 check: fmt-check vet test test-deploy ## 执行格式、静态检查和测试

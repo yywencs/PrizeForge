@@ -40,7 +40,7 @@ func NewDBRouter(cfg *config.DatabaseConfig) *DBRouter {
 
 		db, _ := openMySQLDB(subConf)
 		dbRouter.dbMap[fmt.Sprintf("%02d", i)] = db
-		fmt.Printf("DBRouter: %s\n", dsn)
+		fmt.Printf("DBRouter: configured database shard %s\n", dbName)
 	}
 
 	return dbRouter

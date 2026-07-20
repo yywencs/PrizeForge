@@ -102,7 +102,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "sum(rate(bigmarket_http_requests_total[$__rate_interval])) by (code)",
+          "expr": "sum(rate(prizeforge_http_requests_total[$__rate_interval])) by (code)",
           "legendFormat": "{{code}}",
           "range": true,
           "refId": "A"
@@ -197,14 +197,14 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "histogram_quantile(0.95, sum(rate(bigmarket_http_request_duration_seconds_bucket[$__rate_interval])) by (le))",
+          "expr": "histogram_quantile(0.95, sum(rate(prizeforge_http_request_duration_seconds_bucket[$__rate_interval])) by (le))",
           "legendFormat": "p95",
           "range": true,
           "refId": "A"
         },
         {
           "editorMode": "code",
-          "expr": "histogram_quantile(0.99, sum(rate(bigmarket_http_request_duration_seconds_bucket[$__rate_interval])) by (le))",
+          "expr": "histogram_quantile(0.99, sum(rate(prizeforge_http_request_duration_seconds_bucket[$__rate_interval])) by (le))",
           "legendFormat": "p99",
           "range": true,
           "refId": "B"
@@ -263,7 +263,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "sum(rate(bigmarket_raffle_total[$__rate_interval])) by (result)",
+          "expr": "sum(rate(prizeforge_raffle_total[$__rate_interval])) by (result)",
           "legendFormat": "{{result}}",
           "range": true,
           "refId": "A"
@@ -322,7 +322,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "sum(rate(bigmarket_redis_ops_total[$__rate_interval])) by (cmd, result)",
+          "expr": "sum(rate(prizeforge_redis_ops_total[$__rate_interval])) by (cmd, result)",
           "legendFormat": "{{cmd}}/{{result}}",
           "range": true,
           "refId": "A"
@@ -385,21 +385,21 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "bigmarket_asynq_queue_size",
+          "expr": "prizeforge_asynq_queue_size",
           "legendFormat": "queue/{{queue}}",
           "range": true,
           "refId": "A"
         },
         {
           "editorMode": "code",
-          "expr": "bigmarket_asynq_retry_size",
+          "expr": "prizeforge_asynq_retry_size",
           "legendFormat": "retry/{{queue}}",
           "range": true,
           "refId": "B"
         },
         {
           "editorMode": "code",
-          "expr": "bigmarket_asynq_scheduled_size",
+          "expr": "prizeforge_asynq_scheduled_size",
           "legendFormat": "scheduled/{{queue}}",
           "range": true,
           "refId": "C"
@@ -458,28 +458,28 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "bigmarket_mysql_open_connections",
+          "expr": "prizeforge_mysql_open_connections",
           "legendFormat": "open {{db_name}}/{{role}}",
           "range": true,
           "refId": "A"
         },
         {
           "editorMode": "code",
-          "expr": "bigmarket_mysql_idle",
+          "expr": "prizeforge_mysql_idle",
           "legendFormat": "idle {{db_name}}/{{role}}",
           "range": true,
           "refId": "B"
         },
         {
           "editorMode": "code",
-          "expr": "max_over_time(bigmarket_mysql_in_use[5m])",
+          "expr": "max_over_time(prizeforge_mysql_in_use[5m])",
           "legendFormat": "in_use max(5m) {{db_name}}/{{role}}",
           "range": true,
           "refId": "C"
         },
         {
           "editorMode": "code",
-          "expr": "avg_over_time(bigmarket_mysql_in_use[5m])",
+          "expr": "avg_over_time(prizeforge_mysql_in_use[5m])",
           "legendFormat": "in_use avg(5m) {{db_name}}/{{role}}",
           "range": true,
           "refId": "D"
@@ -542,21 +542,21 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "histogram_quantile(0.95, sum(rate(bigmarket_redis_op_duration_seconds_bucket[$__rate_interval])) by (le))",
+          "expr": "histogram_quantile(0.95, sum(rate(prizeforge_redis_op_duration_seconds_bucket[$__rate_interval])) by (le))",
           "legendFormat": "redis p95",
           "range": true,
           "refId": "A"
         },
         {
           "editorMode": "code",
-          "expr": "histogram_quantile(0.95, sum(rate(bigmarket_asynq_task_duration_seconds_bucket[$__rate_interval])) by (le))",
+          "expr": "histogram_quantile(0.95, sum(rate(prizeforge_asynq_task_duration_seconds_bucket[$__rate_interval])) by (le))",
           "legendFormat": "asynq p95",
           "range": true,
           "refId": "B"
         },
         {
           "editorMode": "code",
-          "expr": "histogram_quantile(0.95, sum(rate(bigmarket_raffle_duration_seconds_bucket[$__rate_interval])) by (le))",
+          "expr": "histogram_quantile(0.95, sum(rate(prizeforge_raffle_duration_seconds_bucket[$__rate_interval])) by (le))",
           "legendFormat": "raffle p95",
           "range": true,
           "refId": "C"
@@ -570,7 +570,7 @@
   "schemaVersion": 39,
   "style": "dark",
   "tags": [
-    "bigmarket",
+    "prizeforge",
     "prometheus"
   ],
   "templating": {
@@ -582,8 +582,8 @@
   },
   "timepicker": {},
   "timezone": "browser",
-  "title": "BigMarket Overview",
-  "uid": "bigmarket-overview",
+  "title": "PrizeForge Overview",
+  "uid": "prizeforge-overview",
   "version": 1,
   "weekStart": ""
 }

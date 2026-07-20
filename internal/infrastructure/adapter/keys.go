@@ -5,16 +5,16 @@ import "fmt"
 // ============================strategy keys ==============================
 
 const (
-	strategyPrefix              = "big_market_strategy_%d"
-	strategyAwardKeyPrefix      = "big_market_strategy_award_key_%d"
-	strategyRateTableKeyPrefix  = "big_market_strategy_rate_table_key_%s"
-	strategyRateRangeKeyPrefix  = "big_market_strategy_rate_range_key_%s"
-	strategyAwardCountKey       = "big_market_strategy_award_count_key_%d_%d"
-	strategyAwardReservationKey = "big_market_strategy_award_reservation_%s_%s"
-	strategyRuleModelKeyPrefix  = "big_market_strategy_rule_model_%d_%d"
-	strategyRuleValueKeyPrefix  = "big_market_strategy_rule_value_key_%d_%s"
-	ruleTreeKeyPrefix           = "big_market_rule_tree_%s"
-	strategyRuleWeightKeyPrefix = "big_market_strategy_rule_weight_key_%d"
+	strategyPrefix              = "prizeforge_strategy_%d"
+	strategyAwardKeyPrefix      = "prizeforge_strategy_award_key_%d"
+	strategyRateTableKeyPrefix  = "prizeforge_strategy_rate_table_key_%s"
+	strategyRateRangeKeyPrefix  = "prizeforge_strategy_rate_range_key_%s"
+	strategyAwardCountKey       = "prizeforge_strategy_award_count_key_%d_%d"
+	strategyAwardReservationKey = "prizeforge_strategy_award_reservation_%s_%s"
+	strategyRuleModelKeyPrefix  = "prizeforge_strategy_rule_model_%d_%d"
+	strategyRuleValueKeyPrefix  = "prizeforge_strategy_rule_value_key_%d_%s"
+	ruleTreeKeyPrefix           = "prizeforge_rule_tree_%s"
+	strategyRuleWeightKeyPrefix = "prizeforge_strategy_rule_weight_key_%d"
 )
 
 func GetStrategyKey(strategyID int64) string {
@@ -61,10 +61,10 @@ func GetStrategyRuleWeightKey(strategyID int64) string {
 
 const (
 	ActivitySkuCountQueryKey       = "activity_sku_count_query_key"
-	activitySkuKeyPrefix           = "big_market_activity_sku_%d"
-	activityKeyPrefix              = "big_market_activity_%d"
+	activitySkuKeyPrefix           = "prizeforge_activity_sku_%d"
+	activityKeyPrefix              = "prizeforge_activity_%d"
 	activitySkuStockCountKey       = "activity_sku_stock_count_key_%d"
-	activityCountKeyPrefix         = "big_market_activity_count_%d"
+	activityCountKeyPrefix         = "prizeforge_activity_count_%d"
 	activityAccountKey             = "activity_account_key_%d_%s"
 	activityAccountTotalSurplusKey = "activity_account_total_surplus_%d_%s"
 	activityAccountMonthSurplusKey = "activity_account_month_surplus_%d_%s_%s"

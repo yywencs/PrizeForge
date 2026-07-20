@@ -12,7 +12,7 @@ const (
 	defaultMySQLCharset = "utf8mb4"
 	defaultServerID     = 2001
 	defaultReadTimeout  = "30s"
-	defaultESIndexPrefx = "bm"
+	defaultESIndexPrefx = "prizeforge"
 )
 
 type Config struct {
@@ -43,7 +43,7 @@ func LoadConfigFromEnv() (*Config, error) {
 		MySQLCharset:      getenvDefault("CDC_MYSQL_CHARSET", defaultMySQLCharset),
 		MySQLReadTimeout:  getenvDefault("CDC_MYSQL_READ_TIMEOUT", defaultReadTimeout),
 		MySQLServerID:     serverID,
-		IncludeTableRegex: splitCSV(getenvDefault("CDC_INCLUDE_TABLE_REGEX", "big_market_01\\..*,big_market_02\\..*")),
+		IncludeTableRegex: splitCSV(getenvDefault("CDC_INCLUDE_TABLE_REGEX", "prizeforge_01\\..*,prizeforge_02\\..*")),
 		ESAddr:            strings.TrimRight(strings.TrimSpace(os.Getenv("CDC_ES_ADDR")), "/"),
 		ESIndexPrefix:     strings.ToLower(getenvDefault("CDC_ES_INDEX_PREFIX", defaultESIndexPrefx)),
 	}

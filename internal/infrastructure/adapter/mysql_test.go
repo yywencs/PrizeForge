@@ -11,21 +11,21 @@ func TestResolveDatabaseDSN(t *testing.T) {
 	}{
 		{
 			name:   "default database",
-			dsn:    "root:password@tcp(mysql:3306)/big_market%s?parseTime=True",
+			dsn:    "root:password@tcp(mysql:3306)/prizeforge%s?parseTime=True",
 			suffix: "",
-			want:   "root:password@tcp(mysql:3306)/big_market?parseTime=True",
+			want:   "root:password@tcp(mysql:3306)/prizeforge?parseTime=True",
 		},
 		{
 			name:   "database shard",
-			dsn:    "root:password@tcp(mysql:3306)/big_market%s?parseTime=True",
+			dsn:    "root:password@tcp(mysql:3306)/prizeforge%s?parseTime=True",
 			suffix: "_02",
-			want:   "root:password@tcp(mysql:3306)/big_market_02?parseTime=True",
+			want:   "root:password@tcp(mysql:3306)/prizeforge_02?parseTime=True",
 		},
 		{
 			name:   "dsn without template",
-			dsn:    "root:p%40ssword@tcp(mysql:3306)/big_market?parseTime=True",
+			dsn:    "root:p%40ssword@tcp(mysql:3306)/prizeforge?parseTime=True",
 			suffix: "_01",
-			want:   "root:p%40ssword@tcp(mysql:3306)/big_market?parseTime=True",
+			want:   "root:p%40ssword@tcp(mysql:3306)/prizeforge?parseTime=True",
 		},
 	}
 

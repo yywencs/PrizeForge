@@ -2,7 +2,7 @@ name: prizeforge
 
 x-app-environment: &app-environment
   TZ: Asia/Shanghai
-  PRIZEFORGE_DATA_MYSQL_DSN: root:${MYSQL_ROOT_PASSWORD:?MYSQL_ROOT_PASSWORD is required}@tcp(mysql:3306)/big_market%s?charset=utf8mb4&parseTime=True&loc=Local&timeout=10s
+  PRIZEFORGE_DATA_MYSQL_DSN: root:${MYSQL_ROOT_PASSWORD:?MYSQL_ROOT_PASSWORD is required}@tcp(mysql:3306)/prizeforge%s?charset=utf8mb4&parseTime=True&loc=Local&timeout=10s
   PRIZEFORGE_DATA_REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
   PRIZEFORGE_ASYNQ_REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
   PRIZEFORGE_RABBITMQ_USERNAME: ${RABBITMQ_USER:-prizeforge}
@@ -22,9 +22,10 @@ services:
       - --max-connections=100
     volumes:
       - mysql-data:/var/lib/mysql
-      - ./sql/big_market.sql:/docker-entrypoint-initdb.d/10-big-market.sql:ro
-      - ./sql/big_market_01.sql:/docker-entrypoint-initdb.d/20-big-market-01.sql:ro
-      - ./sql/big_market_02.sql:/docker-entrypoint-initdb.d/30-big-market-02.sql:ro
+      - ./sql/prizeforge.sql:/docker-entrypoint-initdb.d/10-prizeforge.sql:ro
+      - ./sql/prizeforge_01.sql:/docker-entrypoint-initdb.d/20-prizeforge-01.sql:ro
+      - ./sql/prizeforge_02.sql:/docker-entrypoint-initdb.d/30-prizeforge-02.sql:ro
+      - ./sql/prizeforge_rebate.sql:/docker-entrypoint-initdb.d/40-prizeforge-rebate.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$${MYSQL_ROOT_PASSWORD} --silent"]
       interval: 10s

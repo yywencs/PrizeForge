@@ -1,0 +1,27 @@
+name: prizeforge-integration
+
+services:
+  mysql:
+    image: ${INTEGRATION_MYSQL_IMAGE:-mysql:8.4.6}
+    environment:
+      TZ: Asia/Shanghai
+      MYSQL_ROOT_PASSWORD: ${INTEGRATION_MYSQL_PASSWORD:-prizeforge-integration}
+      MYSQL_ROOT_HOST: "%"
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_0900_ai_ci
+    ports:
+      - "127.0.0.1:${INTEGRATION_MYSQL_PORT:-13306}:3306"
+    tmpfs:
+      - /var/lib/mysql
+    volumes:
+      - ./docs/sql/prizeforge.sql:/docker-entrypoint-initdb.d/10-prizeforge.sql:ro
+      - ./docs/sql/prizeforge_01.sql:/docker-entrypoint-initdb.d/20-prizeforge-01.sql:ro
+      - ./docs/sql/prizeforge_02.sql:/docker-entrypoint-initdb.d/30-prizeforge-02.sql:ro
+      - ./docs/sql/prizeforge_rebate.sql:/docker-entrypoint-initdb.d/40-prizeforge-rebate.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$${MYSQL_ROOT_PASSWORD} --silent"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+      start_period: 20s

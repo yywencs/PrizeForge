@@ -21,7 +21,7 @@ rabbitmq:
 
 data:
   mysql:
-    dsn: "root:password@tcp(127.0.0.1:3306)/big_market%s?charset=utf8mb4&parseTime=True&loc=Local&timeout=30s"
+    dsn: "root:password@tcp(127.0.0.1:3306)/prizeforge%s?charset=utf8mb4&parseTime=True&loc=Local&timeout=30s"
     max_open_conns: 25
     # minimum-idle: 15 -> SetMaxIdleConns
     # (在 Go 中，MaxIdleConns 既控制最小空闲也控制最大空闲，通常设置为和 Open 一样或略小)

@@ -89,7 +89,7 @@ func (h *EventHandler) OnPosSynced(_ *replication.EventHeader, pos mysql.Positio
 }
 
 func (h *EventHandler) String() string {
-	return "big-market-cdc-handler"
+	return "prizeforge-cdc-handler"
 }
 
 func (h *EventHandler) rowToDocument(table *schema.Table, row []any) map[string]any {
