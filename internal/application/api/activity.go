@@ -10,24 +10,56 @@ import (
 	"time"
 )
 
+// activityPartakeService 定义活动应用层创建和抢占抽奖订单所需的最小能力。
+type activityPartakeService interface {
+	CreateOrder(context.Context, *activity.PartakeRaffleActivity) (*activity.CreatePartakeOrder, error)
+	TryClaimDraw(context.Context, string, string) (*activity.DrawClaim, error)
+	ReleaseDrawClaim(context.Context, string, string, string) error
+}
+
+// activityQuotaService 定义活动应用层查询和预热用户额度所需的最小能力。
+type activityQuotaService interface {
+	QueryActivityAccountEntity(context.Context, string, int64) (*activity.ActivityAccount, error)
+	AssembleActivityAccountByUserId(context.Context, string, int64) error
+}
+
+// raffleStrategyService 定义活动抽奖编排所需的策略能力。
+type raffleStrategyService interface {
+	PerformRaffle(context.Context, *strategy.RaffleFactor) (*strategy.RaffleAward, error)
+	QueryStrategyAward(context.Context, int64, int64) (*strategy.StrategyAward, error)
+}
+
+// userAwardService 定义活动抽奖编排保存和查询中奖记录所需的能力。
+type userAwardService interface {
+	SaveUserAwardRecord(context.Context, *award.UserAwardRecord) (*award.UserAwardRecord, error)
+	QueryByOrderID(context.Context, string, string) (*award.UserAwardRecord, error)
+}
+
+// behaviorRebateService 定义活动应用层签到返利所需的最小能力。
+type behaviorRebateService interface {
+	CreateOrder(context.Context, *rebate.Behavior) ([]string, error)
+	QueryOrderByOutBusinessNo(context.Context, string, string) ([]*rebate.BehaviorRebateOrder, error)
+}
+
 // ActivityUsecase API侧活动用例——编排多个 domain service 完成抽奖完整链路。
 type ActivityUsecase struct {
-	partakeSvc  *activity.ActivityPartakeUsecase
-	quotaSvc    *activity.ActivityQuotaUsecase
+	partakeSvc  activityPartakeService
+	quotaSvc    activityQuotaService
 	stockMgr    *activity.StockManager
-	strategySvc *strategy.StrategyUsecase
-	awardSvc    *award.AwardUsecase
-	rebateSvc   *rebate.BehaviorRebateUsecase
+	strategySvc raffleStrategyService
+	awardSvc    userAwardService
+	rebateSvc   behaviorRebateService
+	now         func() time.Time
 }
 
 // NewActivityUsecase creates an ActivityUsecase with all needed domain services.
 func NewActivityUsecase(
-	partakeSvc *activity.ActivityPartakeUsecase,
-	quotaSvc *activity.ActivityQuotaUsecase,
+	partakeSvc activityPartakeService,
+	quotaSvc activityQuotaService,
 	stockMgr *activity.StockManager,
-	strategySvc *strategy.StrategyUsecase,
-	awardSvc *award.AwardUsecase,
-	rebateSvc *rebate.BehaviorRebateUsecase,
+	strategySvc raffleStrategyService,
+	awardSvc userAwardService,
+	rebateSvc behaviorRebateService,
 ) *ActivityUsecase {
 	return &ActivityUsecase{
 		partakeSvc:  partakeSvc,
@@ -36,6 +68,7 @@ func NewActivityUsecase(
 		strategySvc: strategySvc,
 		awardSvc:    awardSvc,
 		rebateSvc:   rebateSvc,
+		now:         time.Now,
 	}
 }
 
@@ -127,7 +160,7 @@ func (u *ActivityUsecase) Draw(ctx context.Context, userID string, activityID in
 		OrderID:       userRaffleOrder.OrderID,
 		AwardID:       int(raffleAward.AwardID),
 		AwardTitle:    raffleAward.AwardTitle,
-		AwardTime:     time.Now(),
+		AwardTime:     u.now(),
 		AwardState:    award.AwardStateCreate,
 		StockReserved: raffleAward.StockReserved,
 		DrawOwner:     claim.Owner,
@@ -160,7 +193,7 @@ func (u *ActivityUsecase) CalendarSignRebate(ctx context.Context, userID string)
 	_, err := u.rebateSvc.CreateOrder(ctx, &rebate.Behavior{
 		UserID:        userID,
 		BehaviorType:  rebate.Sign,
-		OutBusinessNo: time.Now().Format("20060102"),
+		OutBusinessNo: u.now().Format("20060102"),
 	})
 	if err != nil {
 		return false, err
@@ -170,7 +203,7 @@ func (u *ActivityUsecase) CalendarSignRebate(ctx context.Context, userID string)
 
 // IsCalendarSignRebate 查询用户今日是否已签到。
 func (u *ActivityUsecase) IsCalendarSignRebate(ctx context.Context, userID string) (bool, error) {
-	orders, err := u.rebateSvc.QueryOrderByOutBusinessNo(ctx, userID, time.Now().Format("20060102"))
+	orders, err := u.rebateSvc.QueryOrderByOutBusinessNo(ctx, userID, u.now().Format("20060102"))
 	if err != nil {
 		return false, err
 	}
