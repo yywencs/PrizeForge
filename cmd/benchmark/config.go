@@ -78,6 +78,9 @@ func (c benchmarkConfig) validate() error {
 	if strings.TrimSpace(c.UserPrefix) == "" {
 		return fmt.Errorf("user-prefix 不能为空")
 	}
+	if userID := benchmarkUserID(c.UserPrefix, c.Users); len(userID) > 32 {
+		return fmt.Errorf("生成的 user_id %q 超过数据库 varchar(32)", userID)
+	}
 	return nil
 }
 

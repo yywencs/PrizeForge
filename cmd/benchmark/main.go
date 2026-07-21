@@ -11,7 +11,22 @@ import (
 )
 
 func main() {
-	config, err := parseConfig(os.Args[1:], os.Stderr)
+	args := os.Args[1:]
+	if len(args) > 0 && args[0] == "prepare" {
+		if err := runPrepareCommand(args[1:], os.Stdout, os.Stderr); err != nil {
+			if errors.Is(err, flag.ErrHelp) {
+				return
+			}
+			fmt.Fprintf(os.Stderr, "prepare 失败: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+	if len(args) > 0 && args[0] == "run" {
+		args = args[1:]
+	}
+
+	config, err := parseConfig(args, os.Stderr)
 	if err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return

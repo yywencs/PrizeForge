@@ -99,7 +99,7 @@ func (r *benchmarkRunner) execute(ctx context.Context, sequence uint64) requestR
 	startedAt := time.Now()
 	userIndex := (sequence - 1) % uint64(r.config.Users)
 	payload := drawRequest{
-		UserID:     fmt.Sprintf("%s-%06d", r.config.UserPrefix, userIndex+1),
+		UserID:     benchmarkUserID(r.config.UserPrefix, int(userIndex+1)),
 		ActivityID: r.config.ActivityID,
 		RequestID:  fmt.Sprintf("benchmark-%s-%s", r.runID, strconv.FormatUint(sequence, 36)),
 	}
