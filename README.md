@@ -245,7 +245,8 @@ Prometheus 指标覆盖 HTTP、抽奖结果、库存、MQ、Asynq 队列和 MySQ
 当前完整抽奖链路的压测工具、数据准备方法、参数说明和结果解读见
 [cmd/benchmark/README.md](cmd/benchmark/README.md)。
 
-仓库中的 `PERFORMANCE_BASELINE_NO_OUTBOX.md` 记录了单次历史压测基线：
+[旧版全异步链路压测记录（无 Outbox）](docs/performance/legacy_async_no_outbox_baseline.md)
+保存了项目引入 Outbox 之前的一次历史压测基线：
 
 - 机器：单机 2C4G
 - 工具：wrk
