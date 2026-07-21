@@ -242,6 +242,9 @@ Prometheus 指标覆盖 HTTP、抽奖结果、库存、MQ、Asynq 队列和 MySQ
 
 ## 压测基线
 
+当前完整抽奖链路的压测工具、数据准备方法、参数说明和结果解读见
+[cmd/benchmark/README.md](cmd/benchmark/README.md)。
+
 仓库中的 `PERFORMANCE_BASELINE_NO_OUTBOX.md` 记录了单次历史压测基线：
 
 - 机器：单机 2C4G
