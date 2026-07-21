@@ -18,6 +18,39 @@ import (
 	"prizeforge/pkg/xrand"
 )
 
+// TestActivityRepositoryCachesInitialRedisStock 验证库存键不存在时，库存预热会通过
+// Redis SetNX 写入初始库存，并且库存键不会被设置过期时间。
+func TestActivityRepositoryCachesInitialRedisStock(t *testing.T) {
+	ctx := context.Background()
+	skuID := newIntegrationRedisActivityID(t)
+	stockKey := adapter.GetActivitySkuStockCountKey(skuID)
+	trackIntegrationRedisKeys(t, stockKey)
+	repository := activityrepo.NewRepository(nil, nil, integrationRedis, nil, nil, nil)
+
+	if err := repository.CacheActivitySkuStockCount(ctx, stockKey, 100); err != nil {
+		t.Fatalf("CacheActivitySkuStockCount() error = %v, want nil", err)
+	}
+
+	assertIntegrationRedisInt(t, stockKey, 100)
+	assertIntegrationRedisKeyPersistent(t, stockKey)
+}
+
+// TestActivityRepositoryDoesNotOverwriteExistingRedisStock 验证库存已经被扣减后再次预热，
+// Redis SetNX 不会把实时剩余库存覆盖为配置中的初始库存。
+func TestActivityRepositoryDoesNotOverwriteExistingRedisStock(t *testing.T) {
+	ctx := context.Background()
+	skuID := newIntegrationRedisActivityID(t)
+	stockKey := prepareIntegrationActivityRedisStock(t, skuID, 7)
+	repository := activityrepo.NewRepository(nil, nil, integrationRedis, nil, nil, nil)
+
+	if err := repository.CacheActivitySkuStockCount(ctx, stockKey, 100); err != nil {
+		t.Fatalf("CacheActivitySkuStockCount() error = %v, want nil", err)
+	}
+
+	assertIntegrationRedisInt(t, stockKey, 7)
+	assertIntegrationRedisKeyPersistent(t, stockKey)
+}
+
 // TestActivityRepositoryRejectsUninitializedRedisStock 验证库存键不存在时返回明确错误，
 // 并且不会为用户写入任何活动结果。
 func TestActivityRepositoryRejectsUninitializedRedisStock(t *testing.T) {
@@ -279,5 +312,16 @@ func assertIntegrationStockZeroPublishCount(t *testing.T, publisher *integration
 		if !ok || gotSkuID != skuID {
 			t.Fatalf("stock-zero event data = %#v, want sku %d", event.Data, skuID)
 		}
+	}
+}
+
+func assertIntegrationRedisKeyPersistent(t *testing.T, key string) {
+	t.Helper()
+	ttl, err := integrationRedisClient.TTL(context.Background(), key).Result()
+	if err != nil {
+		t.Fatalf("query Redis key TTL %s: %v", key, err)
+	}
+	if ttl != -1 {
+		t.Fatalf("Redis key TTL %s = %s, want persistent key", key, ttl)
 	}
 }

@@ -14,9 +14,11 @@ import (
 	"prizeforge/internal/infrastructure/adapter"
 	"prizeforge/pkg/cache"
 	"prizeforge/pkg/config"
+	"prizeforge/pkg/logger"
 
 	mysqlDriver "github.com/go-sql-driver/mysql"
 	"github.com/redis/go-redis/v9"
+	"go.uber.org/zap"
 	gormMySQL "gorm.io/driver/mysql"
 	"gorm.io/gorm"
 )
@@ -31,9 +33,11 @@ var (
 	integrationRedisClient *redis.Client
 )
 
-// TestMain 连接由 compose.integration.yaml 创建的临时 MySQL 和 Redis，验证所有依赖可用，
-// 并在全部集成测试结束后关闭数据库连接池和 Redis 客户端。
+// TestMain 初始化无输出测试日志，连接由 compose.integration.yaml 创建的临时 MySQL 和 Redis，
+// 验证所有依赖可用，并在全部集成测试结束后关闭数据库连接池和 Redis 客户端。
 func TestMain(m *testing.M) {
+	logger.Log = zap.NewNop()
+
 	dsn := strings.TrimSpace(os.Getenv("PRIZEFORGE_INTEGRATION_MYSQL_DSN"))
 	if dsn == "" {
 		dsn = defaultIntegrationDSN
