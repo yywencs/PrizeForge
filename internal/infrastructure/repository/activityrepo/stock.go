@@ -35,9 +35,9 @@ func (d *Repository) CacheActivitySkuStockCount(ctx context.Context, cacheKey st
 }
 
 func (d *Repository) ClearActivitySkuStock(ctx context.Context, sku int64) error {
-	err := d.db.WithContext(ctx).Table("raffle_activity_sku_stock").
+	err := d.db.WithContext(ctx).Model(&po.RaffleActivitySku{}).
 		Where("sku = ?", sku).
-		Update("stock_count_surplus", 0)
+		Update("stock_count_surplus", 0).Error
 	if err != nil {
 		return activity.ErrClearActivitySkuStockError
 	}

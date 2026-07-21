@@ -56,9 +56,15 @@ func NewRabbitMQConsumer(
 		listeners: make(map[string]Listener),
 	}
 
-	c.RegisterListener(activity.ActivitySkuStockZeroTopic, stockListener)
-	c.RegisterListener(activity.ActivityAwardSendTopic, rebateListener)
-	c.RegisterListener(activity.SaveOrderRecordTopic, saveOrderListener)
+	if stockListener != nil {
+		c.RegisterListener(activity.ActivitySkuStockZeroTopic, stockListener)
+	}
+	if rebateListener != nil {
+		c.RegisterListener(activity.ActivityAwardSendTopic, rebateListener)
+	}
+	if saveOrderListener != nil {
+		c.RegisterListener(activity.SaveOrderRecordTopic, saveOrderListener)
+	}
 
 	return c
 }
