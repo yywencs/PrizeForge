@@ -4,8 +4,10 @@ COMPOSE ?= docker compose
 INTEGRATION_COMPOSE ?= $(COMPOSE) -f compose.integration.yaml
 INTEGRATION_MYSQL_PASSWORD ?= prizeforge-integration
 INTEGRATION_MYSQL_PORT ?= 13306
+INTEGRATION_REDIS_PORT ?= 16379
 export INTEGRATION_MYSQL_PASSWORD
 export INTEGRATION_MYSQL_PORT
+export INTEGRATION_REDIS_PORT
 
 BIN_DIR ?= bin
 IMAGE_PREFIX ?= prizeforge
@@ -49,8 +51,8 @@ test-cover: ## 生成测试覆盖率报告 coverage.html
 	$(GO) tool cover -func=coverage.out
 
 .PHONY: integration-up
-integration-up: ## 启动并等待临时 MySQL 集成测试环境就绪
-	$(INTEGRATION_COMPOSE) up -d --wait mysql
+integration-up: ## 启动并等待临时 MySQL、Redis 集成测试环境就绪
+	$(INTEGRATION_COMPOSE) up -d --wait mysql redis
 
 .PHONY: integration-db-check
 integration-db-check: ## 验证集成测试分库和返利表已经初始化
@@ -62,17 +64,25 @@ integration-db-check: ## 验证集成测试分库和返利表已经初始化
 	test "$$rebate_order_table_count" = "8"; \
 	printf '%s\n' "integration MySQL schema is ready"
 
+.PHONY: integration-redis-check
+integration-redis-check: ## 验证集成测试 Redis 已经就绪
+	@response="$$( $(INTEGRATION_COMPOSE) exec -T redis redis-cli ping )"; \
+	test "$$response" = "PONG"; \
+	printf '%s\n' "integration Redis is ready"
+
 .PHONY: integration-down
 integration-down: ## 销毁临时集成测试环境及其数据
 	$(INTEGRATION_COMPOSE) down --volumes --remove-orphans
 
 .PHONY: integration-test
-integration-test: ## 启动临时 MySQL、运行集成测试并自动销毁环境
+integration-test: ## 启动临时 MySQL、Redis，运行集成测试并自动销毁环境
 	@set -eu; \
-	INTEGRATION_MYSQL_PASSWORD='$(INTEGRATION_MYSQL_PASSWORD)' INTEGRATION_MYSQL_PORT='$(INTEGRATION_MYSQL_PORT)' $(INTEGRATION_COMPOSE) up -d --wait mysql; \
+	INTEGRATION_MYSQL_PASSWORD='$(INTEGRATION_MYSQL_PASSWORD)' INTEGRATION_MYSQL_PORT='$(INTEGRATION_MYSQL_PORT)' INTEGRATION_REDIS_PORT='$(INTEGRATION_REDIS_PORT)' $(INTEGRATION_COMPOSE) up -d --wait mysql redis; \
 	trap '$(INTEGRATION_COMPOSE) down --volumes --remove-orphans' EXIT; \
 	$(MAKE) integration-db-check; \
+	$(MAKE) integration-redis-check; \
 	PRIZEFORGE_INTEGRATION_MYSQL_DSN='root:$(INTEGRATION_MYSQL_PASSWORD)@tcp(127.0.0.1:$(INTEGRATION_MYSQL_PORT))/prizeforge%s?charset=utf8mb4&parseTime=True&loc=Local&timeout=5s' \
+	PRIZEFORGE_INTEGRATION_REDIS_ADDR='127.0.0.1:$(INTEGRATION_REDIS_PORT)' \
 		$(GO) test -tags=integration ./tests/integration/... -count=1
 
 .PHONY: check

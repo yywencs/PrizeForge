@@ -12,22 +12,27 @@ import (
 	"time"
 
 	"prizeforge/internal/infrastructure/adapter"
+	"prizeforge/pkg/cache"
 	"prizeforge/pkg/config"
 
 	mysqlDriver "github.com/go-sql-driver/mysql"
+	"github.com/redis/go-redis/v9"
 	gormMySQL "gorm.io/driver/mysql"
 	"gorm.io/gorm"
 )
 
 const defaultIntegrationDSN = "root:prizeforge-integration@tcp(127.0.0.1:13306)/prizeforge%s?charset=utf8mb4&parseTime=True&loc=Local&timeout=5s"
+const defaultIntegrationRedisAddr = "127.0.0.1:16379"
 
 var (
-	integrationDBRouter  *adapter.DBRouter
-	integrationDefaultDB *gorm.DB
+	integrationDBRouter    *adapter.DBRouter
+	integrationDefaultDB   *gorm.DB
+	integrationRedis       *cache.Cache
+	integrationRedisClient *redis.Client
 )
 
-// TestMain 连接由 compose.integration.yaml 创建的临时 MySQL，验证三个数据库可用，
-// 并在全部集成测试结束后关闭默认库和两个分片库的连接池。
+// TestMain 连接由 compose.integration.yaml 创建的临时 MySQL 和 Redis，验证所有依赖可用，
+// 并在全部集成测试结束后关闭数据库连接池和 Redis 客户端。
 func TestMain(m *testing.M) {
 	dsn := strings.TrimSpace(os.Getenv("PRIZEFORGE_INTEGRATION_MYSQL_DSN"))
 	if dsn == "" {
@@ -35,6 +40,14 @@ func TestMain(m *testing.M) {
 	}
 	if err := validateIntegrationDSN(dsn); err != nil {
 		fmt.Fprintf(os.Stderr, "invalid integration MySQL DSN: %v\n", err)
+		os.Exit(1)
+	}
+	redisAddr := strings.TrimSpace(os.Getenv("PRIZEFORGE_INTEGRATION_REDIS_ADDR"))
+	if redisAddr == "" {
+		redisAddr = defaultIntegrationRedisAddr
+	}
+	if err := validateIntegrationRedisAddr(redisAddr); err != nil {
+		fmt.Fprintf(os.Stderr, "invalid integration Redis address: %v\n", err)
 		os.Exit(1)
 	}
 
@@ -69,10 +82,20 @@ func TestMain(m *testing.M) {
 		fmt.Fprintf(os.Stderr, "ping integration database shards: %v\n", err)
 		os.Exit(1)
 	}
+	integrationRedisClient = redis.NewClient(&redis.Options{Addr: redisAddr})
+	if err := integrationRedisClient.Ping(ctx).Err(); err != nil {
+		cancel()
+		fmt.Fprintf(os.Stderr, "ping integration Redis: %v\n", err)
+		os.Exit(1)
+	}
+	integrationRedis = cache.New(&cache.Options{Redis: integrationRedisClient})
 	cancel()
 
 	code := m.Run()
 	closeIntegrationDatabases()
+	if integrationRedisClient != nil {
+		_ = integrationRedisClient.Close()
+	}
 	os.Exit(code)
 }
 
@@ -97,6 +120,17 @@ func validateIntegrationDSN(dsn string) error {
 	}
 	if host != "127.0.0.1" && host != "localhost" && host != "::1" {
 		return fmt.Errorf("refusing non-local database host %q", host)
+	}
+	return nil
+}
+
+func validateIntegrationRedisAddr(addr string) error {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return fmt.Errorf("parse address %q: %w", addr, err)
+	}
+	if host != "127.0.0.1" && host != "localhost" && host != "::1" {
+		return fmt.Errorf("refusing non-local Redis host %q", host)
 	}
 	return nil
 }
