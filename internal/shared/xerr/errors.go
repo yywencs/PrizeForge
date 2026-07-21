@@ -1,11 +1,15 @@
 package xerr
 
-import "fmt"
+import (
+	"fmt"
+	"sort"
+)
 
 // CodeError 实现了 error 接口，但带了 Code
 type CodeError struct {
 	errCode ErrCode
 	errMsg  string
+	cause   error
 }
 
 // 必须实现 Error() string 方法
@@ -21,6 +25,21 @@ func (e *CodeError) GetErrMsg() string {
 	return e.errMsg
 }
 
+// Is 根据错误码判断两个 CodeError 是否属于同一类错误，
+// 使派生错误仍能通过 errors.Is 匹配原始哨兵错误。
+func (e *CodeError) Is(target error) bool {
+	targetError, ok := target.(*CodeError)
+	return ok && e != nil && targetError != nil && e.errCode == targetError.errCode
+}
+
+// Unwrap 返回底层原始错误，使 errors.Is 和 errors.As 可以继续沿错误链判断。
+func (e *CodeError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.cause
+}
+
 // 工厂方法：创建一个新的 CodeError
 func New(errCode ErrCode, errMsg string) *CodeError {
 	return &CodeError{errCode: errCode, errMsg: errMsg}
@@ -34,18 +53,26 @@ func NewErrCode(errCode ErrCode) *CodeError {
 	return &CodeError{errCode: errCode, errMsg: MapErrMsg(errCode)}
 }
 
-// WithCause wraps the original error as cause.
+// WithCause 返回包含原始错误的新副本，不修改当前 CodeError。
 func (e *CodeError) WithCause(cause error) *CodeError {
+	derived := *e
 	if cause != nil {
-		e.errMsg = fmt.Sprintf("%s: %v", e.errMsg, cause)
+		derived.errMsg = fmt.Sprintf("%s: %v", e.errMsg, cause)
+		derived.cause = cause
 	}
-	return e
+	return &derived
 }
 
-// WithMetadata appends metadata to the error message.
+// WithMetadata 返回追加元数据后的新副本，不修改当前 CodeError。
 func (e *CodeError) WithMetadata(md map[string]string) *CodeError {
-	for k, v := range md {
-		e.errMsg = fmt.Sprintf("%s [%s=%s]", e.errMsg, k, v)
+	derived := *e
+	keys := make([]string, 0, len(md))
+	for key := range md {
+		keys = append(keys, key)
 	}
-	return e
+	sort.Strings(keys)
+	for _, key := range keys {
+		derived.errMsg = fmt.Sprintf("%s [%s=%s]", derived.errMsg, key, md[key])
+	}
+	return &derived
 }

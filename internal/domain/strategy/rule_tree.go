@@ -75,32 +75,52 @@ func (e *ruleTreeEngine) process(ctx context.Context, userID string, orderID str
 	nextNode := e.RuleTree.TreeRootRuleNode
 	strategyAward := &treeStrategyAward{}
 	for nextNode != "" {
-		treeNode := e.RuleTree.NodeMap[nextNode]
-		logicNode := e.TreeNodeGroup[nextNode]
+		currentNode := nextNode
+		treeNode, treeNodeExists := e.RuleTree.NodeMap[currentNode]
+		logicNode, logicNodeExists := e.TreeNodeGroup[currentNode]
+		if !treeNodeExists || treeNode == nil || !logicNodeExists || logicNode == nil {
+			logger.Error("规则树引擎执行失败：节点未配置或不受支持",
+				"current_node", currentNode,
+			)
+			return nil, ErrRuleTreeInvalid
+		}
 
 		treeAction, err := logicNode.logic(ctx, userID, orderID, strategyID, awardID, treeNode.RuleValue)
 		if err != nil {
 			return nil, err
 		}
 
-		nextNode = e.next(treeAction.RuleLogicCheckType, treeNode.TreeNodeLine)
+		nextNode, err = e.next(currentNode, treeAction.RuleLogicCheckType, treeNode.TreeNodeLine)
+		if err != nil {
+			return nil, err
+		}
 
 		strategyAward = &treeAction.Award
 	}
 	return strategyAward, nil
 }
 
-func (e *ruleTreeEngine) next(matterValue RuleLogicCheckType, treeNodeLines []*RuleTreeNodeLine) RuleTreeName {
+func (e *ruleTreeEngine) next(currentNode RuleTreeName, matterValue RuleLogicCheckType, treeNodeLines []*RuleTreeNodeLine) (RuleTreeName, error) {
 	if len(treeNodeLines) == 0 {
-		return ""
+		return "", nil
 	}
 
 	for _, line := range treeNodeLines {
-		if e.decisionLogic(matterValue, line) {
-			return RuleTreeName(line.RuleNodeTo)
+		if line != nil && e.decisionLogic(matterValue, line) {
+			return RuleTreeName(line.RuleNodeTo), nil
 		}
 	}
-	panic("决策树引擎，nextNode 计算失败，未找到可执行节点！")
+
+	// 库存节点只为库存不足配置兜底分支；库存预占成功时当前奖品即为最终结果。
+	if currentNode == RuleStock && matterValue == RuleCheckAllow {
+		return "", nil
+	}
+
+	logger.Error("规则树引擎执行失败：未找到匹配分支",
+		"current_node", currentNode,
+		"check_type", matterValue,
+	)
+	return "", ErrRuleTreeInvalid
 }
 
 func (e *ruleTreeEngine) decisionLogic(matterValue RuleLogicCheckType, treeNodeLine *RuleTreeNodeLine) bool {

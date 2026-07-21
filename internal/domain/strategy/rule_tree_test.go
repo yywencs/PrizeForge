@@ -229,3 +229,146 @@ func TestRuleStockNodeLogic(t *testing.T) {
 		})
 	}
 }
+
+// TestRuleTreeEngineStockSuccessTerminates 验证库存预占成功后，即使规则树只配置了
+// 库存不足的兜底分支，也会正常结束并返回已预占的奖品。
+func TestRuleTreeEngineStockSuccessTerminates(t *testing.T) {
+	repo := &fakeStrategyRepository{
+		reserveAwardStockFn: func(_ context.Context, userID string, orderID string, strategyID int64, awardID int64) (int64, bool, error) {
+			if userID != "user-1" || orderID != "order-1" || strategyID != 100001 || awardID != 101 {
+				t.Fatalf("ReserveAwardStock() args = (%q, %q, %d, %d)", userID, orderID, strategyID, awardID)
+			}
+			return 101, true, nil
+		},
+	}
+	engine := newTestRuleTreeEngine(t, repo, &RuleTree{
+		TreeRootRuleNode: RuleLock,
+		NodeMap: map[RuleTreeName]*RuleTreeNode{
+			RuleLock: {
+				RuleKey:   RuleLock,
+				RuleValue: "1",
+				TreeNodeLine: []*RuleTreeNodeLine{
+					{
+						RuleNodeFrom:   string(RuleLock),
+						RuleNodeTo:     string(RuleStock),
+						RuleLimitType:  EQUAL,
+						RuleLimitValue: RuleCheckAllow,
+					},
+					{
+						RuleNodeFrom:   string(RuleLock),
+						RuleNodeTo:     string(RuleLuckAward),
+						RuleLimitType:  EQUAL,
+						RuleLimitValue: RuleCheckTakeOver,
+					},
+				},
+			},
+			RuleStock: {
+				RuleKey: RuleStock,
+				TreeNodeLine: []*RuleTreeNodeLine{
+					{
+						RuleNodeFrom:   string(RuleStock),
+						RuleNodeTo:     string(RuleLuckAward),
+						RuleLimitType:  EQUAL,
+						RuleLimitValue: RuleCheckTakeOver,
+					},
+				},
+			},
+			RuleLuckAward: {
+				RuleKey:   RuleLuckAward,
+				RuleValue: "999:兜底奖品",
+			},
+		},
+	})
+
+	award, err := engine.process(context.Background(), "user-1", "order-1", 100001, 101)
+
+	if err != nil {
+		t.Fatalf("process() error = %v, want nil", err)
+	}
+	if award.AwardID != 101 || !award.StockReserved {
+		t.Fatalf("process() award = %#v, want reserved award 101", award)
+	}
+}
+
+// TestRuleTreeEngineStockExhaustedUsesFallback 验证库存不足时会按照 TAKE_OVER
+// 分支进入兜底节点，并返回兜底奖品。
+func TestRuleTreeEngineStockExhaustedUsesFallback(t *testing.T) {
+	repo := &fakeStrategyRepository{
+		reserveAwardStockFn: func(context.Context, string, string, int64, int64) (int64, bool, error) {
+			return 101, false, nil
+		},
+	}
+	engine := newTestRuleTreeEngine(t, repo, &RuleTree{
+		TreeRootRuleNode: RuleStock,
+		NodeMap: map[RuleTreeName]*RuleTreeNode{
+			RuleStock: {
+				RuleKey: RuleStock,
+				TreeNodeLine: []*RuleTreeNodeLine{
+					{
+						RuleNodeFrom:   string(RuleStock),
+						RuleNodeTo:     string(RuleLuckAward),
+						RuleLimitType:  EQUAL,
+						RuleLimitValue: RuleCheckTakeOver,
+					},
+				},
+			},
+			RuleLuckAward: {
+				RuleKey:   RuleLuckAward,
+				RuleValue: "999:兜底奖品",
+			},
+		},
+	})
+
+	award, err := engine.process(context.Background(), "user-1", "order-1", 100001, 101)
+
+	if err != nil {
+		t.Fatalf("process() error = %v, want nil", err)
+	}
+	if award.AwardID != 999 || award.StockReserved {
+		t.Fatalf("process() award = %#v, want unreserved fallback award 999", award)
+	}
+}
+
+// TestRuleTreeEngineRejectsUnmatchedBranch 验证非库存节点存在连线但没有任何
+// 条件与执行结果匹配时返回规则树错误，而不是 panic 或静默结束。
+func TestRuleTreeEngineRejectsUnmatchedBranch(t *testing.T) {
+	engine := newTestRuleTreeEngine(t, &fakeStrategyRepository{}, &RuleTree{
+		TreeRootRuleNode: RuleLock,
+		NodeMap: map[RuleTreeName]*RuleTreeNode{
+			RuleLock: {
+				RuleKey:   RuleLock,
+				RuleValue: "10",
+				TreeNodeLine: []*RuleTreeNodeLine{
+					{
+						RuleNodeFrom:   string(RuleLock),
+						RuleNodeTo:     string(RuleLuckAward),
+						RuleLimitType:  EQUAL,
+						RuleLimitValue: RuleCheckTakeOver,
+					},
+				},
+			},
+			RuleLuckAward: {
+				RuleKey:   RuleLuckAward,
+				RuleValue: "999:兜底奖品",
+			},
+		},
+	})
+
+	award, err := engine.process(context.Background(), "user-1", "order-1", 100001, 101)
+
+	if !errors.Is(err, ErrRuleTreeInvalid) {
+		t.Fatalf("process() error = %v, want %v", err, ErrRuleTreeInvalid)
+	}
+	if award != nil {
+		t.Fatalf("process() award = %#v, want nil", award)
+	}
+}
+
+func newTestRuleTreeEngine(t *testing.T, repo Repo, ruleTree *RuleTree) *ruleTreeEngine {
+	t.Helper()
+	engine, err := newRuleTreeFactory(repo).newDecisionTreeEngine(ruleTree)
+	if err != nil {
+		t.Fatalf("newDecisionTreeEngine() error = %v, want nil", err)
+	}
+	return engine
+}
