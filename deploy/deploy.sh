@@ -155,6 +155,32 @@ wait_until_ready() {
 	return 1
 }
 
+# 调用只读的 Admin 业务接口，确认 HTTP、应用层、Repository 和 MySQL 查询链路均可用。
+run_business_smoke_test() {
+	local endpoint="http://127.0.0.1:8081/admin/v1/strategy/query_raffle_award_list?strategy_id=100001"
+	local response
+
+	if ! response="$(curl \
+		--fail \
+		--silent \
+		--show-error \
+		--max-time 5 \
+		--request POST \
+		"${endpoint}")"; then
+		echo "business smoke test request failed: ${endpoint}" >&2
+		return 1
+	fi
+
+	# HTTP 接口始终返回 200，因此还必须检查业务码和预置奖品，避免把业务错误误判为成功。
+	if [[ "${response}" != *'"code":0'* ]] ||
+		[[ "${response}" != *'"award_id":101'* ]]; then
+		echo "business smoke test returned unexpected response: ${response}" >&2
+		return 1
+	fi
+
+	echo "business smoke test passed"
+}
+
 # 在修改线上配置前，先验证目标标签对应的 Compose 配置是否合法。
 echo "validating Compose configuration for ${TARGET_TAG}"
 IMAGE_TAG="${TARGET_TAG}" "${COMPOSE[@]}" config --quiet
@@ -180,6 +206,13 @@ echo "starting API and Admin"
 if ! wait_until_ready; then
 	"${COMPOSE[@]}" ps >&2 || true
 	"${COMPOSE[@]}" logs --tail=100 api admin >&2 || true
+	exit 1
+fi
+
+# 健康端点只能证明进程和依赖存活；再执行一次只读业务查询后才判定新版本可用。
+if ! run_business_smoke_test; then
+	"${COMPOSE[@]}" ps >&2 || true
+	"${COMPOSE[@]}" logs --tail=100 admin >&2 || true
 	exit 1
 fi
 
