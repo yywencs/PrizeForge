@@ -37,3 +37,18 @@ services:
       interval: 2s
       timeout: 5s
       retries: 30
+
+  rabbitmq:
+    image: ${INTEGRATION_RABBITMQ_IMAGE:-rabbitmq:4.2.8-alpine}
+    environment:
+      TZ: Asia/Shanghai
+      RABBITMQ_DEFAULT_USER: ${INTEGRATION_RABBITMQ_USER:-prizeforge-integration}
+      RABBITMQ_DEFAULT_PASS: ${INTEGRATION_RABBITMQ_PASSWORD:-prizeforge-integration}
+    ports:
+      - "127.0.0.1:${INTEGRATION_RABBITMQ_PORT:-15673}:5672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+      start_period: 20s

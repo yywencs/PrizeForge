@@ -5,9 +5,15 @@ INTEGRATION_COMPOSE ?= $(COMPOSE) -f compose.integration.yaml
 INTEGRATION_MYSQL_PASSWORD ?= prizeforge-integration
 INTEGRATION_MYSQL_PORT ?= 13306
 INTEGRATION_REDIS_PORT ?= 16379
+INTEGRATION_RABBITMQ_PORT ?= 15673
+INTEGRATION_RABBITMQ_USER ?= prizeforge-integration
+INTEGRATION_RABBITMQ_PASSWORD ?= prizeforge-integration
 export INTEGRATION_MYSQL_PASSWORD
 export INTEGRATION_MYSQL_PORT
 export INTEGRATION_REDIS_PORT
+export INTEGRATION_RABBITMQ_PORT
+export INTEGRATION_RABBITMQ_USER
+export INTEGRATION_RABBITMQ_PASSWORD
 
 BIN_DIR ?= bin
 IMAGE_PREFIX ?= prizeforge
@@ -51,8 +57,8 @@ test-cover: ## 生成测试覆盖率报告 coverage.html
 	$(GO) tool cover -func=coverage.out
 
 .PHONY: integration-up
-integration-up: ## 启动并等待临时 MySQL、Redis 集成测试环境就绪
-	$(INTEGRATION_COMPOSE) up -d --wait mysql redis
+integration-up: ## 启动并等待临时 MySQL、Redis、RabbitMQ 集成测试环境就绪
+	$(INTEGRATION_COMPOSE) up -d --wait mysql redis rabbitmq
 
 .PHONY: integration-db-check
 integration-db-check: ## 验证集成测试分库和返利表已经初始化
@@ -70,19 +76,28 @@ integration-redis-check: ## 验证集成测试 Redis 已经就绪
 	test "$$response" = "PONG"; \
 	printf '%s\n' "integration Redis is ready"
 
+.PHONY: integration-rabbitmq-check
+integration-rabbitmq-check: ## 验证集成测试 RabbitMQ 已经就绪
+	@$(INTEGRATION_COMPOSE) exec -T rabbitmq rabbitmq-diagnostics -q ping >/dev/null; \
+	printf '%s\n' "integration RabbitMQ is ready"
+
 .PHONY: integration-down
 integration-down: ## 销毁临时集成测试环境及其数据
 	$(INTEGRATION_COMPOSE) down --volumes --remove-orphans
 
 .PHONY: integration-test
-integration-test: ## 启动临时 MySQL、Redis，运行集成测试并自动销毁环境
+integration-test: ## 启动临时 MySQL、Redis、RabbitMQ，运行集成测试并自动销毁环境
 	@set -eu; \
-	INTEGRATION_MYSQL_PASSWORD='$(INTEGRATION_MYSQL_PASSWORD)' INTEGRATION_MYSQL_PORT='$(INTEGRATION_MYSQL_PORT)' INTEGRATION_REDIS_PORT='$(INTEGRATION_REDIS_PORT)' $(INTEGRATION_COMPOSE) up -d --wait mysql redis; \
+	INTEGRATION_MYSQL_PASSWORD='$(INTEGRATION_MYSQL_PASSWORD)' INTEGRATION_MYSQL_PORT='$(INTEGRATION_MYSQL_PORT)' INTEGRATION_REDIS_PORT='$(INTEGRATION_REDIS_PORT)' INTEGRATION_RABBITMQ_PORT='$(INTEGRATION_RABBITMQ_PORT)' INTEGRATION_RABBITMQ_USER='$(INTEGRATION_RABBITMQ_USER)' INTEGRATION_RABBITMQ_PASSWORD='$(INTEGRATION_RABBITMQ_PASSWORD)' $(INTEGRATION_COMPOSE) up -d --wait mysql redis rabbitmq; \
 	trap '$(INTEGRATION_COMPOSE) down --volumes --remove-orphans' EXIT; \
 	$(MAKE) integration-db-check; \
 	$(MAKE) integration-redis-check; \
+	$(MAKE) integration-rabbitmq-check; \
 	PRIZEFORGE_INTEGRATION_MYSQL_DSN='root:$(INTEGRATION_MYSQL_PASSWORD)@tcp(127.0.0.1:$(INTEGRATION_MYSQL_PORT))/prizeforge%s?charset=utf8mb4&parseTime=True&loc=Local&timeout=5s' \
 	PRIZEFORGE_INTEGRATION_REDIS_ADDR='127.0.0.1:$(INTEGRATION_REDIS_PORT)' \
+	PRIZEFORGE_INTEGRATION_RABBITMQ_ADDR='127.0.0.1:$(INTEGRATION_RABBITMQ_PORT)' \
+	PRIZEFORGE_INTEGRATION_RABBITMQ_USER='$(INTEGRATION_RABBITMQ_USER)' \
+	PRIZEFORGE_INTEGRATION_RABBITMQ_PASSWORD='$(INTEGRATION_RABBITMQ_PASSWORD)' \
 		$(GO) test -tags=integration ./tests/integration/... -count=1
 
 .PHONY: check
