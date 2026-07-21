@@ -3,14 +3,17 @@ package adapter
 import (
 	"database/sql"
 	"fmt"
-	"prizeforge/internal/metrics"
-	"prizeforge/pkg/config"
+	stdlog "log"
+	"os"
 	"strings"
 	"time"
 
+	"prizeforge/internal/metrics"
+	"prizeforge/pkg/config"
+
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
-	"gorm.io/gorm/logger"
+	gormlogger "gorm.io/gorm/logger"
 )
 
 // NewDB creates a GORM DB connection from config.
@@ -28,8 +31,20 @@ func resolveDatabaseDSN(dsnTemplate, suffix string) string {
 
 // openMySQLDB opens a MySQL connection using GORM.
 func openMySQLDB(cfg *config.DatabaseConfig) (*gorm.DB, *sql.DB) {
+	// 生产环境只记录 SQL 错误和慢查询，避免在高并发场景下为每条 SQL
+	// 执行日志格式化及磁盘写入。查询不存在是仓储层的正常分支，不作为错误记录。
+	databaseLogger := gormlogger.New(
+		stdlog.New(os.Stdout, "\r\n", stdlog.LstdFlags),
+		gormlogger.Config{
+			SlowThreshold:             200 * time.Millisecond,
+			LogLevel:                  gormlogger.Warn,
+			IgnoreRecordNotFoundError: true,
+			ParameterizedQueries:      true,
+			Colorful:                  false,
+		},
+	)
 	gormConfig := &gorm.Config{
-		Logger: logger.Default.LogMode(logger.Info),
+		Logger: databaseLogger,
 	}
 
 	dsn := cfg.Dsn
