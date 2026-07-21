@@ -7,6 +7,7 @@ import (
 	"prizeforge/internal/infrastructure/adapter"
 	"prizeforge/internal/infrastructure/repository/po"
 	"prizeforge/pkg/cache"
+	"prizeforge/pkg/rabbitmq"
 	"time"
 
 	"github.com/hibiken/asynq"
@@ -17,13 +18,19 @@ type Repository struct {
 	routerDB           *adapter.DBRouter
 	db                 *gorm.DB
 	redis              *cache.Cache
-	stockZeroPublisher *adapter.Publisher
+	stockZeroPublisher activityEventPublisher
 	queue              *asynq.Client
 	inspector          *asynq.Inspector
 }
 
+// activityEventPublisher 定义活动仓储发布库存耗尽和异步订单事件所需的最小能力。
+type activityEventPublisher interface {
+	PublishStockZero(context.Context, *rabbitmq.BaseEvent) error
+	PublishSaveOrder(context.Context, *rabbitmq.BaseEvent) error
+}
+
 // NewRepository 构造活动仓储实现
-func NewRepository(routerDB *adapter.DBRouter, db *gorm.DB, redis *cache.Cache, stockZeroPublisher *adapter.Publisher, queue *asynq.Client, inspector *asynq.Inspector) activity.Repo {
+func NewRepository(routerDB *adapter.DBRouter, db *gorm.DB, redis *cache.Cache, stockZeroPublisher activityEventPublisher, queue *asynq.Client, inspector *asynq.Inspector) activity.Repo {
 	return &Repository{
 		routerDB:           routerDB,
 		db:                 db,

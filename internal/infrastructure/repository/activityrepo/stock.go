@@ -109,6 +109,10 @@ func (d *Repository) SubtractionActivitySkuStock(ctx context.Context, skuID int6
 	resultArray := result.([]interface{})
 	status := resultArray[0].(int64)
 	resultJSON := resultArray[1].(string)
+	if status == -1 {
+		metrics.IncStockConsume(activityID, skuID, "not_initialized")
+		return nil, errors.New(resultJSON)
+	}
 
 	var activityResult activity.ActivityResult
 	if err := json.Unmarshal([]byte(resultJSON), &activityResult); err != nil {
@@ -117,9 +121,6 @@ func (d *Repository) SubtractionActivitySkuStock(ctx context.Context, skuID int6
 	}
 
 	switch status {
-	case -1:
-		metrics.IncStockConsume(activityID, skuID, "not_initialized")
-		return nil, errors.New("库存未初始化")
 	case 0:
 		stockZeroEvent := rabbitmq.NewBaseEvent(skuID)
 		if err := d.stockZeroPublisher.PublishStockZero(ctx, stockZeroEvent); err != nil {
