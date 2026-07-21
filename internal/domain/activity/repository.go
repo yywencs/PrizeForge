@@ -34,10 +34,6 @@ type Repo interface {
 	TryClaimUserRaffleOrder(ctx context.Context, userID string, orderID string) (*DrawClaim, error)
 	// ReleaseUserRaffleOrderClaim 将 processing 订单释放为 created，供明确失败后的请求立即重试。
 	ReleaseUserRaffleOrderClaim(ctx context.Context, userID string, orderID string, owner string) error
-	// CacheGetOrCreateNoUsedRaffleOrder 先从缓存复用未使用订单，缺失时原子扣减额度并创建新订单
-	CacheGetOrCreateNoUsedRaffleOrder(ctx context.Context, order *UserRaffleOrder) (*UserRaffleOrder, bool, error)
-	// SaveLiteUserRaffleOrder 同步落一条最小化抽奖订单，并写入异步补额度账 task
-	SaveLiteUserRaffleOrder(ctx context.Context, aggregate *CreatePartakeOrder) error
 	// 查询用户活动账户信息
 	QueryActivityAccount(ctx context.Context, userID string, activityID int64) (*ActivityAccount, error)
 	// 查询用户活动账户日信息

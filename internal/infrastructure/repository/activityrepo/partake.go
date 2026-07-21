@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"prizeforge/internal/domain/activity"
@@ -13,15 +12,12 @@ import (
 	"prizeforge/pkg/cache"
 	"prizeforge/pkg/logger"
 	"prizeforge/pkg/rabbitmq"
-	"strconv"
-	"strings"
 	"time"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
 
-const pendingRaffleOrderTTL = 30 * time.Minute
 const drawProcessingLease = 30 * time.Second
 
 func (r *Repository) QueryRaffleActivity(ctx context.Context, activityID int64) (*activity.Activity, error) {
@@ -442,156 +438,6 @@ func (r *Repository) ReleaseUserRaffleOrderClaim(ctx context.Context, userID str
 		}).Error
 }
 
-func (r *Repository) CacheGetOrCreateNoUsedRaffleOrder(ctx context.Context, order *activity.UserRaffleOrder) (*activity.UserRaffleOrder, bool, error) {
-	totalKey := adapter.GetActivityAccountTotalSurplusKey(order.ActivityID, order.UserID)
-	dayKey := adapter.GetActivityAccountDaySurplusKey(order.ActivityID, order.UserID, time.Now().Format("2006-01-02"))
-	monthKey := adapter.GetActivityAccountMonthSurplusKey(order.ActivityID, order.UserID, time.Now().Format("2006-01"))
-	pendingOrderKey := adapter.GetPendingRaffleOrderKey(order.ActivityID, order.UserID)
-
-	script := `
-		local pending = redis.call("HMGET", KEYS[4], "oid", "sid", "st")
-		if pending[1] and pending[2] and pending[3] then
-			if pending[3] == "0" then
-				return {2, pending[1], pending[2], pending[3]}
-			end
-
-			redis.call("DEL", KEYS[4])
-		end
-
-		local total = redis.call("GET", KEYS[1])
-		local day = redis.call("GET", KEYS[2])
-		local month = redis.call("GET", KEYS[3])
-
-		if not total or not day or not month then
-			return {-1}
-		end
-
-		if tonumber(total) <= 0 then return {-2} end
-		if tonumber(day) <= 0 then return {-3} end
-		if tonumber(month) <= 0 then return {-4} end
-
-		redis.call("DECR", KEYS[1])
-		redis.call("DECR", KEYS[2])
-		redis.call("DECR", KEYS[3])
-		redis.call("HSET", KEYS[4],
-			"oid", ARGV[1],
-			"sid", ARGV[2],
-			"st", ARGV[3])
-		redis.call("EXPIRE", KEYS[4], ARGV[4])
-
-		return {1, ARGV[1], ARGV[2], ARGV[3]}
-	`
-
-	result, err := r.redis.Eval(ctx, script, []string{totalKey, dayKey, monthKey, pendingOrderKey},
-		order.OrderID,
-		strconv.FormatInt(order.StrategyID, 10),
-		"0",
-		strconv.FormatInt(int64(pendingRaffleOrderTTL/time.Second), 10),
-	)
-	if err != nil {
-		return nil, false, err
-	}
-
-	resultArray, ok := result.([]interface{})
-	if !ok || len(resultArray) == 0 {
-		return nil, false, fmt.Errorf("unexpected redis eval result: %T", result)
-	}
-
-	status, ok := resultArray[0].(int64)
-	if !ok {
-		return nil, false, fmt.Errorf("unexpected redis eval status type: %T", resultArray[0])
-	}
-
-	switch status {
-	case -1, -2:
-		return nil, false, activity.ErrActivityQuotaError
-	case -3:
-		return nil, false, activity.ErrActivityAccountDayCountSurplusNotEnough
-	case -4:
-		return nil, false, activity.ErrActivityAccountMonthCountSurplusNotEnough
-	case 1, 2:
-		if len(resultArray) < 4 {
-			return nil, false, fmt.Errorf("unexpected redis eval payload length: %d", len(resultArray))
-		}
-
-		strategyID, err := strconv.ParseInt(fmt.Sprint(resultArray[2]), 10, 64)
-		if err != nil {
-			return nil, false, err
-		}
-
-		return &activity.UserRaffleOrder{
-			UserID:       order.UserID,
-			ActivityID:   order.ActivityID,
-			ActivityName: order.ActivityName,
-			StrategyID:   strategyID,
-			OrderID:      fmt.Sprint(resultArray[1]),
-			OrderTime:    order.OrderTime,
-			OrderState:   activity.UserRaffleOrderStateCreate,
-		}, status == 2, nil
-	default:
-		return nil, false, fmt.Errorf("unexpected redis eval status: %d", status)
-	}
-}
-
-func (r *Repository) SaveLiteUserRaffleOrder(ctx context.Context, aggregate *activity.CreatePartakeOrder) error {
-	order := aggregate.UserRaffleOrder
-	db, tableSuffix := r.routerDB.DBStrategy(order.UserID)
-	if db == nil {
-		compensateErr := r.compensatePendingRaffleOrder(ctx, order)
-		if compensateErr != nil {
-			logger.Warn("compensate pending raffle order failed after db router error", "orderID", order.OrderID, "err", compensateErr)
-		}
-		return activity.ErrDBRouterError
-	}
-
-	orderPO := &po.UserRaffleOrder{
-		UserID:           order.UserID,
-		ActivityID:       order.ActivityID,
-		ActivityName:     order.ActivityName,
-		StrategyID:       order.StrategyID,
-		OrderID:          order.OrderID,
-		OrderTime:        order.OrderTime,
-		OrderState:       string(order.OrderState),
-		AccountSyncState: string(activity.AccountSyncStateCreate),
-	}
-
-	baseEvent := rabbitmq.NewBaseEvent(aggregate)
-	taskPO, taskErr := buildSaveOrderTaskPO(aggregate.UserID, baseEvent.ID, aggregate)
-	if taskErr != nil {
-		compensateErr := r.compensatePendingRaffleOrder(ctx, order)
-		if compensateErr != nil {
-			logger.Warn("compensate pending raffle order failed after task build error", "orderID", order.OrderID, "err", compensateErr)
-		}
-		return taskErr
-	}
-
-	err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if createOrderErr := tx.Table("user_raffle_order_" + tableSuffix).Create(orderPO).Error; createOrderErr != nil {
-			return createOrderErr
-		}
-
-		if createTaskErr := tx.Table("task").Create(taskPO).Error; createTaskErr != nil {
-			return createTaskErr
-		}
-
-		return nil
-	})
-	if err == nil {
-		return nil
-	}
-
-	if errors.Is(err, gorm.ErrDuplicatedKey) || strings.Contains(err.Error(), "Duplicate entry") {
-		return nil
-	}
-
-	compensateErr := r.compensatePendingRaffleOrder(ctx, order)
-	if compensateErr != nil {
-		logger.Warn("compensate pending raffle order failed", "orderID", order.OrderID, "err", compensateErr)
-	}
-
-	return err
-}
-
 func (r *Repository) QueryActivityAccountDay(ctx context.Context, userID string, activityID int64, day string) (*activity.ActivityAccountDay, error) {
 	var po po.RaffleActivityAccountDay
 	db, _ := r.routerDB.DBStrategy(userID)
@@ -822,53 +668,4 @@ func (r *Repository) QueryRaffleActivityAccountDayPartakeCount(ctx context.Conte
 		return 0, err
 	}
 	return int64(po.DayCount - po.DayCountSurplus), nil
-}
-
-func (r *Repository) compensatePendingRaffleOrder(ctx context.Context, order *activity.UserRaffleOrder) error {
-	totalKey := adapter.GetActivityAccountTotalSurplusKey(order.ActivityID, order.UserID)
-	dayKey := adapter.GetActivityAccountDaySurplusKey(order.ActivityID, order.UserID, order.OrderTime.Format("2006-01-02"))
-	monthKey := adapter.GetActivityAccountMonthSurplusKey(order.ActivityID, order.UserID, order.OrderTime.Format("2006-01"))
-	pendingOrderKey := adapter.GetPendingRaffleOrderKey(order.ActivityID, order.UserID)
-
-	script := `
-		local pending = redis.call("HMGET", KEYS[4], "oid", "st")
-		if not pending[1] or pending[1] ~= ARGV[1] then
-			return 0
-		end
-
-		if pending[2] ~= "0" then
-			return 0
-		end
-
-		redis.call("INCR", KEYS[1])
-		redis.call("INCR", KEYS[2])
-		redis.call("INCR", KEYS[3])
-		redis.call("DEL", KEYS[4])
-		return 1
-	`
-
-	_, err := r.redis.Eval(ctx, script, []string{totalKey, dayKey, monthKey, pendingOrderKey}, order.OrderID)
-	return err
-}
-
-func buildSaveOrderTaskPO(userID, messageID string, aggregate *activity.CreatePartakeOrder) (*po.Task, error) {
-	message := activity.SaveOrderTaskMessage{
-		UserID:  aggregate.UserID,
-		OrderID: aggregate.UserRaffleOrder.OrderID,
-	}
-
-	messageBytes, err := json.Marshal(message)
-	if err != nil {
-		return nil, err
-	}
-
-	return &po.Task{
-		UserID:     userID,
-		Topic:      activity.SaveOrderRecordTopic,
-		MessageID:  messageID,
-		Message:    string(messageBytes),
-		State:      "create",
-		CreateTime: time.Now(),
-		UpdateTime: time.Now(),
-	}, nil
 }
