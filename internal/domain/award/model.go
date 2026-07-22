@@ -10,6 +10,8 @@ const (
 type SendAwardMessage struct {
 	// UserID 用户ID
 	UserID string `json:"user_id"`
+	// OrderID 抽奖订单ID，同时作为消费端幂等键
+	OrderID string `json:"order_id"`
 	// AwardID 奖品ID
 	AwardID int `json:"award_id"`
 	// AwardTitle 奖品标题（名称）
@@ -32,7 +34,7 @@ type UserAwardRecord struct {
 	AwardTitle string
 	// 中奖时间
 	AwardTime time.Time
-	// 奖品状态；create-创建、completed-发奖完成
+	// 奖品状态；create-创建、complete-发奖完成、fail-发奖失败
 	AwardState AwardState
 	// StockReserved 仅用于应用层决定是否写入库存同步 outbox，不持久化到中奖表。
 	StockReserved bool

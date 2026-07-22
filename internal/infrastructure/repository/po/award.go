@@ -31,8 +31,8 @@ type UserAwardRecord struct {
 	// AwardTime 中奖时间
 	AwardTime time.Time `gorm:"column:award_time;type:datetime;not null;comment:中奖时间"`
 
-	// AwardState 奖品状态；create-创建、completed-发奖完成
-	AwardState string `gorm:"column:award_state;type:varchar(16);not null;default:create;comment:奖品状态；create-创建、completed-发奖完成"`
+	// AwardState 奖品状态；create-创建、complete-发奖完成、fail-发奖失败
+	AwardState string `gorm:"column:award_state;type:varchar(16);not null;default:create;comment:奖品状态；create-创建、complete-发奖完成、fail-发奖失败"`
 
 	// CreateTime 创建时间
 	CreateTime time.Time `gorm:"column:create_time;type:datetime;not null;autoCreateTime;comment:创建时间"`

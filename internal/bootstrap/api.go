@@ -172,10 +172,12 @@ func NewAPIApp() (*HTTPApp, error) {
 	stockListener := listener.NewActivityStockListener(activityQuotaSvc)
 	rebateListener := listener.NewRebateListener(activityQuotaSvc)
 	saveOrderListener := listener.NewSaveOrderListener(activityPartakeSvc)
+	sendAwardListener := listener.NewSendAwardListener(awardSvc)
 
 	// Asynq worker + RabbitMQ consumer
 	asynqWorker := worker.NewAsynqWorker(&cfg.Asynq, skuStockJob, sendAwardMsgJob, strategyAwardStockJob)
 	rabbitMQConsumer := listener.NewRabbitMQConsumer(conn, stockListener, rebateListener, saveOrderListener)
+	rabbitMQConsumer.RegisterListener(award.SendAwardTopic, sendAwardListener)
 
 	// application usecases
 	apiStrategyUsecase := api.NewStrategyUsecase(strategySvc)

@@ -17,6 +17,7 @@ func NewAwardUsecase(repo Repo) *AwardUsecase {
 func (s *AwardUsecase) SaveUserAwardRecord(ctx context.Context, userAwardRecord *UserAwardRecord) (*UserAwardRecord, error) {
 	sendAwardMessage := SendAwardMessage{
 		UserID:     userAwardRecord.UserID,
+		OrderID:    userAwardRecord.OrderID,
 		AwardID:    userAwardRecord.AwardID,
 		AwardTitle: userAwardRecord.AwardTitle,
 	}
@@ -41,4 +42,9 @@ func (s *AwardUsecase) SaveUserAwardRecord(ctx context.Context, userAwardRecord 
 // QueryByOrderID 按 orderID 查询中奖记录。nil 表示该订单尚未落库。
 func (s *AwardUsecase) QueryByOrderID(ctx context.Context, userID string, orderID string) (*UserAwardRecord, error) {
 	return s.repo.QueryByOrderID(ctx, userID, orderID)
+}
+
+// CompleteUserAward 在发奖消费者完成业务处理后，幂等确认中奖记录已发放。
+func (s *AwardUsecase) CompleteUserAward(ctx context.Context, userID string, orderID string) error {
+	return s.repo.CompleteUserAward(ctx, userID, orderID)
 }

@@ -10,6 +10,7 @@ import (
 type fakeAwardRepository struct {
 	saveUserAwardRecordFn func(context.Context, *UserAwardTaskInfo) (*UserAwardRecord, error)
 	queryByOrderIDFn      func(context.Context, string, string) (*UserAwardRecord, error)
+	completeUserAwardFn   func(context.Context, string, string) error
 }
 
 func (f *fakeAwardRepository) SaveUserAwardRecord(ctx context.Context, aggregate *UserAwardTaskInfo) (*UserAwardRecord, error) {
@@ -24,6 +25,13 @@ func (f *fakeAwardRepository) QueryByOrderID(ctx context.Context, userID string,
 		panic("unexpected QueryByOrderID call")
 	}
 	return f.queryByOrderIDFn(ctx, userID, orderID)
+}
+
+func (f *fakeAwardRepository) CompleteUserAward(ctx context.Context, userID string, orderID string) error {
+	if f.completeUserAwardFn == nil {
+		panic("unexpected CompleteUserAward call")
+	}
+	return f.completeUserAwardFn(ctx, userID, orderID)
 }
 
 // TestAwardUsecaseSaveUserAwardRecordBuildsTask 验证保存中奖记录时会同时构造一条
@@ -87,8 +95,28 @@ func TestAwardUsecaseSaveUserAwardRecordBuildsTask(t *testing.T) {
 	if task.State != TaskStateCreate {
 		t.Fatalf("task.State = %q, want %q", task.State, TaskStateCreate)
 	}
-	if task.Message.UserID != record.UserID || task.Message.AwardID != record.AwardID || task.Message.AwardTitle != record.AwardTitle {
-		t.Fatalf("task.Message = %#v, want user=%q award=%d title=%q", task.Message, record.UserID, record.AwardID, record.AwardTitle)
+	if task.Message.UserID != record.UserID || task.Message.OrderID != record.OrderID ||
+		task.Message.AwardID != record.AwardID || task.Message.AwardTitle != record.AwardTitle {
+		t.Fatalf("task.Message = %#v, want user=%q order=%q award=%d title=%q", task.Message, record.UserID, record.OrderID, record.AwardID, record.AwardTitle)
+	}
+}
+
+// TestAwardUsecaseCompleteUserAwardDelegatesToRepository 验证发奖消费者确认完成时，
+// AwardUsecase 会原样传递用户与订单幂等键，并保留仓储返回的错误。
+func TestAwardUsecaseCompleteUserAwardDelegatesToRepository(t *testing.T) {
+	repositoryErr := errors.New("complete award")
+	repo := &fakeAwardRepository{
+		completeUserAwardFn: func(_ context.Context, userID string, orderID string) error {
+			if userID != "user-1" || orderID != "000000000001" {
+				t.Fatalf("CompleteUserAward() args = (%q, %q), want expected identity", userID, orderID)
+			}
+			return repositoryErr
+		},
+	}
+
+	err := NewAwardUsecase(repo).CompleteUserAward(context.Background(), "user-1", "000000000001")
+	if !errors.Is(err, repositoryErr) {
+		t.Fatalf("CompleteUserAward() error = %v, want %v", err, repositoryErr)
 	}
 }
 

@@ -21,6 +21,13 @@ func main() {
 
 	apiServer := app.APIServer()
 
+	// 先同步声明 RabbitMQ 的 Exchange、Queue 和 Binding，再启动 Outbox 调度器和
+	// HTTP 服务，避免应用刚启动时消息先发布、队列尚未绑定而成为不可路由消息。
+	logger.Info("starting RabbitMQ consumer")
+	if err := app.RabbitMQConsumer().Start(ctx); err != nil {
+		log.Fatalf("start RabbitMQ consumer: %v", err)
+	}
+
 	// 启动 API HTTP 服务
 	go func() {
 		logger.Info("starting API server", "addr", app.Config.Server.API.Addr)
@@ -34,14 +41,6 @@ func main() {
 		logger.Info("starting Asynq worker")
 		if err := app.AsynqWorker().Start(ctx); err != nil {
 			logger.Error("Asynq worker stopped", "error", err)
-		}
-	}()
-
-	// 启动 RabbitMQ 消费者
-	go func() {
-		logger.Info("starting RabbitMQ consumer")
-		if err := app.RabbitMQConsumer().Start(ctx); err != nil {
-			logger.Error("RabbitMQ consumer stopped", "error", err)
 		}
 	}()
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"prizeforge/internal/domain/award"
 	"prizeforge/internal/domain/strategy"
 	"prizeforge/internal/infrastructure/adapter"
@@ -155,6 +156,50 @@ func (r *UserAwardRecord) QueryByOrderID(ctx context.Context, userID string, ord
 		return nil, err
 	}
 	return po.ToEntity(), nil
+}
+
+// CompleteUserAward 将中奖记录从 create 幂等推进到 complete。
+// 先使用带状态条件的 UPDATE 争抢处理权；并发重复消息没有更新到记录时，再读取当前
+// 状态区分“已经完成”的幂等成功与“记录缺失/状态冲突”的异常情况。
+func (r *UserAwardRecord) CompleteUserAward(ctx context.Context, userID string, orderID string) error {
+	db, tableSuffix := r.routerDB.DBStrategy(userID)
+	if db == nil {
+		return errors.New("database router returned nil")
+	}
+	tableName := "user_award_record_" + tableSuffix
+
+	result := db.WithContext(ctx).
+		Table(tableName).
+		Where("user_id = ? AND order_id = ? AND award_state = ?", userID, orderID, string(award.AwardStateCreate)).
+		Updates(map[string]interface{}{
+			"award_state": string(award.AwardStateComplete),
+			"update_time": time.Now(),
+		})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 1 {
+		return nil
+	}
+
+	var stored struct {
+		AwardState string `gorm:"column:award_state"`
+	}
+	err := db.WithContext(ctx).
+		Table(tableName).
+		Select("award_state").
+		Where("user_id = ? AND order_id = ?", userID, orderID).
+		Take(&stored).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return award.ErrAwardRecordNotFound
+	}
+	if err != nil {
+		return err
+	}
+	if stored.AwardState == string(award.AwardStateComplete) {
+		return nil
+	}
+	return fmt.Errorf("%w: user_id=%s order_id=%s state=%s", award.ErrAwardStateConflict, userID, orderID, stored.AwardState)
 }
 
 func convertToUserAwardRecordPO(entity *award.UserAwardRecord) *po.UserAwardRecord {

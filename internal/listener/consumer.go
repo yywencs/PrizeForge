@@ -39,7 +39,8 @@ type RabbitMQConsumer struct {
 	channels  []*amqp.Channel     // 所有打开的 channel，Shutdown 时逐个关闭
 }
 
-// NewRabbitMQConsumer 创建 RabbitMQConsumer 并注册三个核心 topic 的监听器。
+// NewRabbitMQConsumer 创建 RabbitMQConsumer 并注册 Activity 领域的三个基础 topic。
+// 其他领域监听器（例如 send_award）由 bootstrap 通过 RegisterListener 显式注册。
 //
 // Topic 与 Listener 对应关系：
 //   - activity_sku_stock_zero_topic → ActivityStockListener（库存归零）

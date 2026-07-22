@@ -227,6 +227,32 @@ func TestAwardRepositoryReusesCanonicalResultOnDuplicate(t *testing.T) {
 	}
 }
 
+// TestAwardRepositoryCompletesAwardIdempotently 验证真实分库分表中的中奖记录只能从
+// create 推进到 complete，重复消费同一订单仍然返回成功且不会产生额外记录。
+func TestAwardRepositoryCompletesAwardIdempotently(t *testing.T) {
+	fixture := newAwardTransactionFixture(t)
+	usecase := newIntegrationAwardUsecase()
+	if _, err := usecase.SaveUserAwardRecord(context.Background(), fixture.awardRecord()); err != nil {
+		t.Fatalf("SaveUserAwardRecord() error = %v, want nil", err)
+	}
+
+	for attempt := 1; attempt <= 2; attempt++ {
+		if err := usecase.CompleteUserAward(context.Background(), fixture.userID, fixture.orderID); err != nil {
+			t.Fatalf("CompleteUserAward() attempt %d error = %v, want nil", attempt, err)
+		}
+	}
+
+	var stored po.UserAwardRecord
+	if err := fixture.db.Table(fixture.awardTable).
+		Where("user_id = ? AND order_id = ?", fixture.userID, fixture.orderID).
+		First(&stored).Error; err != nil {
+		t.Fatalf("query completed award: %v", err)
+	}
+	if stored.AwardState != string(award.AwardStateComplete) {
+		t.Fatalf("award state = %q, want %q", stored.AwardState, award.AwardStateComplete)
+	}
+}
+
 // TestAwardRepositoryRollsBackWhenOutboxInsertFails 验证 Outbox 唯一键冲突会回滚整笔事务：
 // 不留下中奖记录，也不会提前完成抽奖订单或清空账户的当前订单。
 func TestAwardRepositoryRollsBackWhenOutboxInsertFails(t *testing.T) {
@@ -307,7 +333,7 @@ func assertAwardOutboxTasks(t *testing.T, fixture *awardTransactionFixture, task
 	if err := json.Unmarshal([]byte(awardTask.Message), &awardMessage); err != nil {
 		t.Fatalf("unmarshal award task message: %v", err)
 	}
-	if awardMessage.UserID != fixture.userID || awardMessage.AwardID != integrationAwardID {
+	if awardMessage.UserID != fixture.userID || awardMessage.OrderID != fixture.orderID || awardMessage.AwardID != integrationAwardID {
 		t.Fatalf("award task message = %#v, want fixture identity fields", awardMessage)
 	}
 

@@ -16,8 +16,8 @@ import (
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
-// TestRabbitMQPublisherRoutesStockZeroEvent 验证项目发布器会创建 fanout Exchange，
-// 将库存耗尽事件以持久化 JSON 消息路由到绑定队列，并且消息可以被正常确认。
+// TestRabbitMQPublisherRoutesStockZeroEvent 验证项目发布器会创建 fanout Exchange，拒绝
+// 没有绑定队列的消息，并在消息持久化路由后等待 RabbitMQ Broker Confirm。
 func TestRabbitMQPublisherRoutesStockZeroEvent(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -31,10 +31,10 @@ func TestRabbitMQPublisherRoutesStockZeroEvent(t *testing.T) {
 	publisherConfig.Topic.ActivitySkuStockZero = exchangeName
 	publisher := adapter.NewPublisher(rabbitPublisher, &publisherConfig)
 
-	// 第一次发布用于验证项目发布器能够自行声明 Exchange；当时还没有绑定测试队列，
-	// 因此这条声明消息按 fanout 语义直接丢弃，不参与后续断言。
-	if err := publisher.PublishStockZero(ctx, rabbitmq.NewBaseEvent(int64(-1))); err != nil {
-		t.Fatalf("PublishStockZero() declaring exchange error = %v, want nil", err)
+	// 第一次发布用于验证项目发布器能够自行声明 Exchange；因为此时没有绑定队列，
+	// mandatory return 必须让调用方收到错误，Outbox 才不会误标 completed。
+	if err := publisher.PublishStockZero(ctx, rabbitmq.NewBaseEvent(int64(-1))); err == nil {
+		t.Fatal("PublishStockZero() without bound queue error = nil, want unroutable error")
 	}
 
 	channel, err := integrationRabbitMQConnection.Channel()

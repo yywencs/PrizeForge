@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"prizeforge/internal/domain/activity"
+	"prizeforge/internal/domain/award"
 	"prizeforge/internal/infrastructure/adapter"
 	"prizeforge/internal/infrastructure/repository/activityrepo"
 	"prizeforge/internal/infrastructure/repository/po"
@@ -127,6 +128,64 @@ func TestRabbitMQConsumerRequeuesRetryableFailure(t *testing.T) {
 		t.Fatal("requeued RabbitMQ message body changed between attempts")
 	}
 	assertIntegrationEventBody(t, secondCall.body, event.ID, 7_000_002)
+}
+
+// TestRabbitMQConsumerCompletesAwardAndAcknowledgesIdempotently 验证 send_award 消息经过
+// 真实 RabbitMQ 后，会将分片中奖记录更新为 complete；重复投递同一消息仍会成功 ACK。
+func TestRabbitMQConsumerCompletesAwardAndAcknowledgesIdempotently(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	fixture := newAwardTransactionFixture(t)
+	awardUsecase := newIntegrationAwardUsecase()
+	if _, err := awardUsecase.SaveUserAwardRecord(ctx, fixture.awardRecord()); err != nil {
+		t.Fatalf("prepare award record and outbox: %v", err)
+	}
+
+	topic := "prizeforge.integration.consumer.send-award." + xrand.RandomNumeric(12)
+	trackIntegrationRabbitMQTopology(t, topic)
+	connection, err := adapter.NewConnection(integrationRabbitMQConfig)
+	if err != nil {
+		t.Fatalf("connect RabbitMQ send-award test: %v", err)
+	}
+	consumer := listener.NewRabbitMQConsumer(connection, nil, nil, nil)
+	t.Cleanup(consumer.Shutdown)
+	recordingListener := newIntegrationRecordingListener(listener.NewSendAwardListener(awardUsecase), 2)
+	consumer.RegisterListener(topic, recordingListener)
+	if err := consumer.Start(ctx); err != nil {
+		t.Fatalf("start send-award consumer: %v", err)
+	}
+
+	event := &rabbitmq.BaseEvent{
+		ID:        fixture.userID + ":" + fixture.orderID,
+		Timestamp: time.Now(),
+		Data: award.SendAwardMessage{
+			UserID:     fixture.userID,
+			OrderID:    fixture.orderID,
+			AwardID:    integrationAwardID,
+			AwardTitle: "集成测试奖品",
+		},
+	}
+	publisher := newIntegrationTopicPublisher(t, connection)
+	for attempt := 1; attempt <= 2; attempt++ {
+		if err := publisher.PublishTopic(ctx, topic, event); err != nil {
+			t.Fatalf("publish send-award event attempt %d: %v", attempt, err)
+		}
+		call := waitIntegrationListenerCall(t, ctx, recordingListener.calls)
+		if call.retry || call.err != nil {
+			t.Fatalf("send-award listener attempt %d = retry:%t err:%v, want success", attempt, call.retry, call.err)
+		}
+	}
+
+	var stored po.UserAwardRecord
+	if err := fixture.db.Table(fixture.awardTable).
+		Where("user_id = ? AND order_id = ?", fixture.userID, fixture.orderID).
+		First(&stored).Error; err != nil {
+		t.Fatalf("query award after RabbitMQ consumption: %v", err)
+	}
+	if stored.AwardState != string(award.AwardStateComplete) {
+		t.Fatalf("award state = %q, want %q", stored.AwardState, award.AwardStateComplete)
+	}
 }
 
 type integrationListenerCall struct {
