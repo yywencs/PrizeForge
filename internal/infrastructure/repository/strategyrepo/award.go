@@ -11,12 +11,14 @@ import (
 	"prizeforge/internal/infrastructure/repository/po"
 	"prizeforge/pkg/cache"
 	"prizeforge/pkg/common"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/hibiken/asynq"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // 获取strategyID的全部StrategyAward
@@ -108,43 +110,107 @@ func (d *strategyRepository) UpdateStrategyAwardStock(ctx context.Context, userI
 		return nil
 	}
 
-	return d.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		reservation := &po.StrategyAwardStockReservation{
-			UserID:     userID,
-			OrderID:    orderID,
-			StrategyID: strategyID,
-			AwardID:    awardID,
+	return d.UpdateStrategyAwardStockBatch(ctx, []strategy.AwardStockConsumeMessage{{
+		UserID:     userID,
+		OrderID:    orderID,
+		StrategyID: strategyID,
+		AwardID:    awardID,
+	}})
+}
+
+// UpdateStrategyAwardStockBatch 将同一策略奖品的一批库存同步消息放在一个事务中处理。
+// 每个订单仍通过预占记录保证幂等，但库存行只按本批新增预占数更新一次，避免同奖品
+// 的大量事务并发争抢同一行锁。
+func (d *strategyRepository) UpdateStrategyAwardStockBatch(ctx context.Context, messages []strategy.AwardStockConsumeMessage) error {
+	if len(messages) == 0 {
+		return nil
+	}
+
+	batch := append([]strategy.AwardStockConsumeMessage(nil), messages...)
+	sort.Slice(batch, func(i, j int) bool {
+		if batch[i].UserID == batch[j].UserID {
+			return batch[i].OrderID < batch[j].OrderID
 		}
-		if err := tx.Create(reservation).Error; err != nil {
-			if errors.Is(err, gorm.ErrDuplicatedKey) || strings.Contains(err.Error(), "Duplicate entry") {
-				var existing po.StrategyAwardStockReservation
-				if queryErr := tx.
-					Where("user_id = ? AND order_id = ?", userID, orderID).
-					First(&existing).Error; queryErr != nil {
-					return fmt.Errorf("query existing stock reservation: %w", queryErr)
-				}
-				if existing.StrategyID != strategyID || existing.AwardID != awardID {
-					return fmt.Errorf(
-						"stock reservation conflict for user %q order %q: existing strategy=%d award=%d, requested strategy=%d award=%d",
-						userID, orderID, existing.StrategyID, existing.AwardID, strategyID, awardID,
-					)
-				}
-				return nil
+		return batch[i].UserID < batch[j].UserID
+	})
+
+	strategyID, awardID := batch[0].StrategyID, batch[0].AwardID
+	if strategyID <= 0 || awardID <= 0 {
+		return errors.New("strategy_id and award_id must be positive")
+	}
+	for _, message := range batch {
+		if message.UserID == "" || message.OrderID == "" {
+			return errors.New("user_id and order_id are required for batch stock sync")
+		}
+		if message.StrategyID != strategyID || message.AwardID != awardID {
+			return errors.New("batch stock sync messages must belong to the same strategy award")
+		}
+	}
+
+	return d.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		newReservations := 0
+		for _, message := range batch {
+			created, err := createStockReservation(tx, message)
+			if err != nil {
+				return err
 			}
-			return err
+			if created {
+				newReservations++
+			}
 		}
 
+		if newReservations == 0 {
+			return nil
+		}
 		res := tx.Model(&po.StrategyAward{}).
-			Where("strategy_id = ? AND award_id = ? AND award_count_surplus > 0", strategyID, awardID).
-			Update("award_count_surplus", gorm.Expr("award_count_surplus - 1"))
+			Where("strategy_id = ? AND award_id = ? AND award_count_surplus >= ?", strategyID, awardID, newReservations).
+			Update("award_count_surplus", gorm.Expr("award_count_surplus - ?", newReservations))
 		if res.Error != nil {
 			return res.Error
 		}
 		if res.RowsAffected == 0 {
-			return errors.New("no stock to consume or record not found")
+			return errors.New("insufficient stock or strategy award not found")
 		}
 		return nil
 	})
+}
+
+// createStockReservation 向 strategy_award_stock_reservation 表写入订单库存扣减凭证。
+//
+// (user_id, order_id) 是该表的唯一键：首次插入返回 true，表示该订单需要计入本批
+// 库存扣减数量；重复消息通过 OnConflict DoNothing 忽略插入，并在确认原记录的策略和
+// 奖品一致后返回 false，避免 Outbox 重试导致库存重复扣减。若同一订单对应了不同的
+// 策略或奖品，则返回幂等冲突错误。
+//
+// tx 必须是 UpdateStrategyAwardStockBatch 创建的事务。这样库存不足或后续库存更新失败时，
+// 本函数插入的扣减凭证也会随事务一起回滚，避免出现“凭证已存在但库存未扣减”的状态。
+func createStockReservation(tx *gorm.DB, message strategy.AwardStockConsumeMessage) (bool, error) {
+	reservation := &po.StrategyAwardStockReservation{
+		UserID:     message.UserID,
+		OrderID:    message.OrderID,
+		StrategyID: message.StrategyID,
+		AwardID:    message.AwardID,
+	}
+	result := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(reservation)
+	if result.Error != nil {
+		return false, result.Error
+	}
+	if result.RowsAffected == 0 {
+		var existing po.StrategyAwardStockReservation
+		if queryErr := tx.
+			Where("user_id = ? AND order_id = ?", message.UserID, message.OrderID).
+			First(&existing).Error; queryErr != nil {
+			return false, fmt.Errorf("query existing stock reservation: %w", queryErr)
+		}
+		if existing.StrategyID != message.StrategyID || existing.AwardID != message.AwardID {
+			return false, fmt.Errorf(
+				"stock reservation conflict for user %q order %q: existing strategy=%d award=%d, requested strategy=%d award=%d",
+				message.UserID, message.OrderID, existing.StrategyID, existing.AwardID, message.StrategyID, message.AwardID,
+			)
+		}
+		return false, nil
+	}
+	return true, nil
 }
 
 // NewAwardStockConsumeHandler 返回一个可直接用于 ConsumeAwardStockQueue 的处理函数

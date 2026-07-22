@@ -29,6 +29,8 @@ type Repo interface {
 
 	// UpdateStrategyAwardStock 根据队列消费结果，持久化扣减库存到数据库
 	UpdateStrategyAwardStock(ctx context.Context, userID string, orderID string, strategyID int64, awardID int64) error
+	// UpdateStrategyAwardStockBatch 将同一奖品的一批订单幂等落库，并聚合为一次库存扣减。
+	UpdateStrategyAwardStockBatch(ctx context.Context, messages []AwardStockConsumeMessage) error
 
 	// 根据活动ID查询策略ID
 	QueryStrategyIdByActivityId(ctx context.Context, activityID int64) (int64, error)

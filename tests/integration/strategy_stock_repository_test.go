@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"prizeforge/internal/domain/strategy"
 	"prizeforge/internal/infrastructure/repository/po"
 	"prizeforge/internal/infrastructure/repository/strategyrepo"
 	"prizeforge/pkg/xrand"
@@ -16,6 +17,61 @@ import (
 type strategyStockFixture struct {
 	strategyID int64
 	awardIDs   []int64
+}
+
+// TestStrategyRepositoryBatchConsumesStockOnce 验证同一奖品的一批订单只触发一次聚合扣减，
+// 整批重试时不会重复扣库存，批次中混入新订单时也只扣新增预占数量。
+func TestStrategyRepositoryBatchConsumesStockOnce(t *testing.T) {
+	fixture := newStrategyStockFixture(t, 5)
+	repository := strategyrepo.NewStrategyRepository(integrationDefaultDB, nil, nil, integrationDBRouter)
+	awardID := fixture.awardIDs[0]
+	userPrefix := "it-stock-batch-" + xrand.RandomNumeric(6)
+	messages := []strategy.AwardStockConsumeMessage{
+		{UserID: userPrefix + "-1", OrderID: xrand.RandomNumeric(12), StrategyID: fixture.strategyID, AwardID: awardID},
+		{UserID: userPrefix + "-2", OrderID: xrand.RandomNumeric(12), StrategyID: fixture.strategyID, AwardID: awardID},
+		{UserID: userPrefix + "-3", OrderID: xrand.RandomNumeric(12), StrategyID: fixture.strategyID, AwardID: awardID},
+	}
+
+	if err := repository.UpdateStrategyAwardStockBatch(context.Background(), messages); err != nil {
+		t.Fatalf("first UpdateStrategyAwardStockBatch() error = %v, want nil", err)
+	}
+	assertIntegrationStock(t, fixture.strategyID, awardID, 2)
+	assertIntegrationReservationCount(t, fixture.strategyID, 3)
+
+	if err := repository.UpdateStrategyAwardStockBatch(context.Background(), messages); err != nil {
+		t.Fatalf("duplicate UpdateStrategyAwardStockBatch() error = %v, want nil", err)
+	}
+	assertIntegrationStock(t, fixture.strategyID, awardID, 2)
+	assertIntegrationReservationCount(t, fixture.strategyID, 3)
+
+	mixedBatch := append([]strategy.AwardStockConsumeMessage(nil), messages[0])
+	mixedBatch = append(mixedBatch, strategy.AwardStockConsumeMessage{
+		UserID: userPrefix + "-4", OrderID: xrand.RandomNumeric(12), StrategyID: fixture.strategyID, AwardID: awardID,
+	})
+	if err := repository.UpdateStrategyAwardStockBatch(context.Background(), mixedBatch); err != nil {
+		t.Fatalf("mixed UpdateStrategyAwardStockBatch() error = %v, want nil", err)
+	}
+	assertIntegrationStock(t, fixture.strategyID, awardID, 1)
+	assertIntegrationReservationCount(t, fixture.strategyID, 4)
+}
+
+// TestStrategyRepositoryBatchRollsBackWhenStockIsInsufficient 验证聚合扣减库存不足时，
+// 整批幂等预占记录与库存更新一起回滚，不会留下部分成功状态。
+func TestStrategyRepositoryBatchRollsBackWhenStockIsInsufficient(t *testing.T) {
+	fixture := newStrategyStockFixture(t, 2)
+	repository := strategyrepo.NewStrategyRepository(integrationDefaultDB, nil, nil, integrationDBRouter)
+	awardID := fixture.awardIDs[0]
+	messages := []strategy.AwardStockConsumeMessage{
+		{UserID: "it-stock-batch-" + xrand.RandomNumeric(8), OrderID: xrand.RandomNumeric(12), StrategyID: fixture.strategyID, AwardID: awardID},
+		{UserID: "it-stock-batch-" + xrand.RandomNumeric(8), OrderID: xrand.RandomNumeric(12), StrategyID: fixture.strategyID, AwardID: awardID},
+		{UserID: "it-stock-batch-" + xrand.RandomNumeric(8), OrderID: xrand.RandomNumeric(12), StrategyID: fixture.strategyID, AwardID: awardID},
+	}
+
+	if err := repository.UpdateStrategyAwardStockBatch(context.Background(), messages); err == nil {
+		t.Fatal("UpdateStrategyAwardStockBatch() error = nil, want insufficient-stock error")
+	}
+	assertIntegrationStock(t, fixture.strategyID, awardID, 2)
+	assertIntegrationReservationCount(t, fixture.strategyID, 0)
 }
 
 func newStrategyStockFixture(t *testing.T, stocks ...int) *strategyStockFixture {

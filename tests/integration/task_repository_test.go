@@ -17,7 +17,7 @@ import (
 )
 
 // TestTaskRepositoryScansExpiredFailuresThenCreatedTasks 验证真实 task 表的扫描契约：
-// 只重试超过 6 分钟的 fail 任务，随后立即处理 create 任务，并排除近期失败、已完成和超过上限的任务。
+// 只重试超过 6 分钟的 fail 任务，随后立即处理 create 任务，并排除近期失败和已完成任务。
 func TestTaskRepositoryScansExpiredFailuresThenCreatedTasks(t *testing.T) {
 	db := integrationDBRouter.GetDB(1)
 	if db == nil {
@@ -40,9 +40,7 @@ func TestTaskRepositoryScansExpiredFailuresThenCreatedTasks(t *testing.T) {
 		messageID := fmt.Sprintf("create-immediate-%02d", index)
 		updateTime := now.Add(time.Duration(-300+index) * time.Second)
 		tasks = append(tasks, newIntegrationTask(userID, messageID, "create", updateTime))
-		if index < 8 {
-			wantMessageIDs = append(wantMessageIDs, messageID)
-		}
+		wantMessageIDs = append(wantMessageIDs, messageID)
 	}
 	tasks = append(tasks,
 		newIntegrationTask(userID, "completed-old", "completed", now.Add(-time.Hour)),
@@ -56,8 +54,8 @@ func TestTaskRepositoryScansExpiredFailuresThenCreatedTasks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("QueryNoSendMessageTaskList() error = %v, want nil", err)
 	}
-	if len(got) != 10 {
-		t.Fatalf("QueryNoSendMessageTaskList() count = %d, want 10", len(got))
+	if len(got) != 11 {
+		t.Fatalf("QueryNoSendMessageTaskList() count = %d, want 11", len(got))
 	}
 	for index, task := range got {
 		if task.MessageID != wantMessageIDs[index] {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"sync"
 
 	"prizeforge/internal/domain/activity"
@@ -30,7 +31,23 @@ type partakeOrderService interface {
 
 // awardStockService 定义同步策略奖品库存任务所需的能力。
 type awardStockService interface {
-	UpdateStrategyAwardStock(context.Context, string, string, int64, int64) error
+	UpdateStrategyAwardStockBatch(context.Context, []strategy.AwardStockConsumeMessage) error
+}
+
+const (
+	outboxDispatchConcurrency = 8
+	stockGroupConcurrency     = 2
+)
+
+type stockGroupKey struct {
+	strategyID int64
+	awardID    int64
+}
+
+type stockTaskGroup struct {
+	key      stockGroupKey
+	tasks    []*task.Task
+	messages []strategy.AwardStockConsumeMessage
 }
 
 // SendAwardMessage 定时扫描 task 表，将未发送的消息按 topic 分发。
@@ -50,6 +67,7 @@ type SendAwardMessage struct {
 	partakeSvc  partakeOrderService
 	strategySvc awardStockService
 	dbCount     int // 分库数量，决定需要扫描多少个数据库
+	scanMu      sync.Mutex
 }
 
 // NewSendAwardMessage 创建 SendAwardMessage 定时任务。
@@ -72,31 +90,91 @@ func NewSendAwardMessage(
 	}
 }
 
-// ProcessTask 扫描所有分库中未发送的 task 记录并并发分发。
-//
-// 每个分库独立查询，每条 task 在独立 goroutine 中处理以提升吞吐。
-// wg.Wait() 确保本轮所有分发完成后再返回。
+// ProcessTask 扫描所有分库中未发送的 task 记录并分发。
+// 普通消息使用固定大小的工作池；库存消息按策略奖品分组，同组聚合为一次库存更新，
+// 不再为每条消息创建 goroutine 去争抢同一条库存行。
 func (j *SendAwardMessage) ProcessTask(ctx context.Context, _ *asynq.Task) error {
-	var wg sync.WaitGroup
+	// 当前进程内只允许一轮扫描运行，避免上一轮尚未完成时再次取到同一批 create 任务。
+	if !j.scanMu.TryLock() {
+		return nil
+	}
+	defer j.scanMu.Unlock()
+
+	var scannedTasks []*task.Task
 	for dbIdx := 1; dbIdx <= j.dbCount; dbIdx++ {
 		tasks, err := j.taskSvc.QueryNoSendMessageTaskList(ctx, dbIdx)
 		if err != nil {
 			return fmt.Errorf("查询分库%d未发送任务失败: %w", dbIdx, err)
 		}
-		if tasks == nil {
-			continue
-		}
-		for _, t := range tasks {
-			wg.Add(1)
-			// 务必将循环变量作为参数传入闭包，避免所有 goroutine 共享同一个引用
-			go func(taskItem *task.Task) {
-				defer wg.Done()
-				j.dispatchSingleTask(ctx, taskItem)
-			}(t)
-		}
+		scannedTasks = append(scannedTasks, tasks...)
 	}
+
+	regularTasks, stockGroups := j.partitionTasks(ctx, scannedTasks)
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		runBounded(regularTasks, outboxDispatchConcurrency, func(taskItem *task.Task) {
+			j.dispatchSingleTask(ctx, taskItem)
+		})
+	}()
+	go func() {
+		defer wg.Done()
+		runBounded(stockGroups, stockGroupConcurrency, func(group *stockTaskGroup) {
+			j.dispatchStockGroup(ctx, group)
+		})
+	}()
 	wg.Wait()
 	return nil
+}
+
+func (j *SendAwardMessage) partitionTasks(ctx context.Context, tasks []*task.Task) ([]*task.Task, []*stockTaskGroup) {
+	regularTasks := make([]*task.Task, 0, len(tasks))
+	groups := make(map[stockGroupKey]*stockTaskGroup)
+	for _, taskItem := range tasks {
+		if taskItem.Topic != strategy.AwardStockSyncTopic {
+			regularTasks = append(regularTasks, taskItem)
+			continue
+		}
+
+		message, err := decodeStockSyncMessage(taskItem)
+		if err != nil {
+			j.failTask(ctx, taskItem, err)
+			continue
+		}
+		key := stockGroupKey{strategyID: message.StrategyID, awardID: message.AwardID}
+		group := groups[key]
+		if group == nil {
+			group = &stockTaskGroup{key: key}
+			groups[key] = group
+		}
+		group.tasks = append(group.tasks, taskItem)
+		group.messages = append(group.messages, message)
+	}
+
+	stockGroups := make([]*stockTaskGroup, 0, len(groups))
+	for _, group := range groups {
+		stockGroups = append(stockGroups, group)
+	}
+	sort.Slice(stockGroups, func(i, k int) bool {
+		if stockGroups[i].key.strategyID == stockGroups[k].key.strategyID {
+			return stockGroups[i].key.awardID < stockGroups[k].key.awardID
+		}
+		return stockGroups[i].key.strategyID < stockGroups[k].key.strategyID
+	})
+	return regularTasks, stockGroups
+}
+
+func (j *SendAwardMessage) dispatchStockGroup(ctx context.Context, group *stockTaskGroup) {
+	if err := j.strategySvc.UpdateStrategyAwardStockBatch(ctx, group.messages); err != nil {
+		for _, taskItem := range group.tasks {
+			j.failTask(ctx, taskItem, err)
+		}
+		return
+	}
+	for _, taskItem := range group.tasks {
+		j.completeTask(ctx, taskItem)
+	}
 }
 
 // dispatchSingleTask 处理单条 task，保证状态闭环。
@@ -106,14 +184,25 @@ func (j *SendAwardMessage) ProcessTask(ctx context.Context, _ *asynq.Task) error
 // 更新完成状态也失败 → 依然标记为 fail（下次扫描会重试，保证幂等）
 func (j *SendAwardMessage) dispatchSingleTask(ctx context.Context, t *task.Task) {
 	if err := j.routeTaskByTopic(ctx, t); err != nil {
-		logger.Warn("分发消息失败，标记为 fail", "messageID", t.MessageID, "err", err)
-		j.taskSvc.UpdateTaskSendMessageFail(ctx, t.UserID, t.MessageID)
+		j.failTask(ctx, t, err)
 		return
 	}
+	j.completeTask(ctx, t)
+}
 
+func (j *SendAwardMessage) completeTask(ctx context.Context, t *task.Task) {
 	if err := j.taskSvc.UpdateTaskSendMessageCompleted(ctx, t.UserID, t.MessageID); err != nil {
 		logger.Error("更新完成状态失败，降级标记为 fail", "messageID", t.MessageID, "err", err)
-		j.taskSvc.UpdateTaskSendMessageFail(ctx, t.UserID, t.MessageID)
+		if failErr := j.taskSvc.UpdateTaskSendMessageFail(ctx, t.UserID, t.MessageID); failErr != nil {
+			logger.Error("更新失败状态失败", "messageID", t.MessageID, "err", failErr)
+		}
+	}
+}
+
+func (j *SendAwardMessage) failTask(ctx context.Context, t *task.Task, cause error) {
+	logger.Warn("分发消息失败，标记为 fail", "messageID", t.MessageID, "err", cause)
+	if err := j.taskSvc.UpdateTaskSendMessageFail(ctx, t.UserID, t.MessageID); err != nil {
+		logger.Error("更新失败状态失败", "messageID", t.MessageID, "err", err)
 	}
 }
 
@@ -135,13 +224,50 @@ func (j *SendAwardMessage) routeTaskByTopic(ctx context.Context, t *task.Task) e
 		return j.partakeSvc.SaveOrderRecord(ctx, message.ToCreatePartakeOrder())
 
 	case strategy.AwardStockSyncTopic:
-		var message strategy.AwardStockConsumeMessage
-		if err := json.Unmarshal([]byte(t.Message), &message); err != nil {
-			return fmt.Errorf("解析 AwardStockConsumeMessage 失败: %w", err)
+		message, err := decodeStockSyncMessage(t)
+		if err != nil {
+			return err
 		}
-		return j.strategySvc.UpdateStrategyAwardStock(ctx, message.UserID, message.OrderID, message.StrategyID, message.AwardID)
+		return j.strategySvc.UpdateStrategyAwardStockBatch(ctx, []strategy.AwardStockConsumeMessage{message})
 
 	default:
 		return fmt.Errorf("不支持的任务 topic: %s", t.Topic)
 	}
+}
+
+func decodeStockSyncMessage(t *task.Task) (strategy.AwardStockConsumeMessage, error) {
+	var message strategy.AwardStockConsumeMessage
+	if err := json.Unmarshal([]byte(t.Message), &message); err != nil {
+		return strategy.AwardStockConsumeMessage{}, fmt.Errorf("解析 AwardStockConsumeMessage 失败: %w", err)
+	}
+	if message.UserID == "" || message.OrderID == "" || message.StrategyID <= 0 || message.AwardID <= 0 {
+		return strategy.AwardStockConsumeMessage{}, fmt.Errorf("库存同步消息缺少必要字段")
+	}
+	return message, nil
+}
+
+func runBounded[T any](items []T, concurrency int, handler func(T)) {
+	if len(items) == 0 {
+		return
+	}
+	if concurrency <= 0 || concurrency > len(items) {
+		concurrency = len(items)
+	}
+
+	jobs := make(chan T)
+	var wg sync.WaitGroup
+	wg.Add(concurrency)
+	for range concurrency {
+		go func() {
+			defer wg.Done()
+			for item := range jobs {
+				handler(item)
+			}
+		}()
+	}
+	for _, item := range items {
+		jobs <- item
+	}
+	close(jobs)
+	wg.Wait()
 }

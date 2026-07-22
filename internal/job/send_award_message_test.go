@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"sort"
+	"sync"
 	"testing"
 
 	"prizeforge/internal/domain/activity"
@@ -59,14 +61,14 @@ func (f *fakePartakeOrderService) SaveOrderRecord(ctx context.Context, aggregate
 }
 
 type fakeAwardStockService struct {
-	updateStrategyAwardStockFn func(context.Context, string, string, int64, int64) error
+	updateStrategyAwardStockBatchFn func(context.Context, []strategy.AwardStockConsumeMessage) error
 }
 
-func (f *fakeAwardStockService) UpdateStrategyAwardStock(ctx context.Context, userID string, orderID string, strategyID int64, awardID int64) error {
-	if f.updateStrategyAwardStockFn == nil {
-		panic("unexpected UpdateStrategyAwardStock call")
+func (f *fakeAwardStockService) UpdateStrategyAwardStockBatch(ctx context.Context, messages []strategy.AwardStockConsumeMessage) error {
+	if f.updateStrategyAwardStockBatchFn == nil {
+		panic("unexpected UpdateStrategyAwardStockBatch call")
 	}
-	return f.updateStrategyAwardStockFn(ctx, userID, orderID, strategyID, awardID)
+	return f.updateStrategyAwardStockBatchFn(ctx, messages)
 }
 
 // TestSendAwardMessageProcessTaskScansConfiguredDatabases 验证调度任务会按顺序扫描全部
@@ -152,6 +154,98 @@ func TestSendAwardMessageProcessTaskDispatchesAndWaits(t *testing.T) {
 	}
 	if sentTask != taskItem || completedCalls != 1 {
 		t.Fatalf("ProcessTask() result = (sent=%p, completed=%d), want (%p, 1)", sentTask, completedCalls, taskItem)
+	}
+}
+
+// TestSendAwardMessageProcessTaskGroupsStockByAward 验证同一策略奖品的库存任务会合并为
+// 一次批量调用，不同奖品可以作为独立组处理，并在批量同步成功后逐条关闭 Outbox 状态。
+func TestSendAwardMessageProcessTaskGroupsStockByAward(t *testing.T) {
+	tasks := []*task.Task{
+		{UserID: "user-1", Topic: strategy.AwardStockSyncTopic, MessageID: "stock-1", Message: `{"user_id":"user-1","order_id":"order-1","strategy_id":100001,"award_id":101}`},
+		{UserID: "user-2", Topic: strategy.AwardStockSyncTopic, MessageID: "stock-2", Message: `{"user_id":"user-2","order_id":"order-2","strategy_id":100001,"award_id":101}`},
+		{UserID: "user-3", Topic: strategy.AwardStockSyncTopic, MessageID: "stock-3", Message: `{"user_id":"user-3","order_id":"order-3","strategy_id":100001,"award_id":101}`},
+		{UserID: "user-4", Topic: strategy.AwardStockSyncTopic, MessageID: "stock-4", Message: `{"user_id":"user-4","order_id":"order-4","strategy_id":100001,"award_id":102}`},
+	}
+	var mu sync.Mutex
+	var batchSizes []int
+	var batchValidationErr error
+	completed := 0
+	taskSvc := &fakeOutboxTaskService{
+		queryNoSendMessageTaskListFn: func(context.Context, int) ([]*task.Task, error) {
+			return tasks, nil
+		},
+		updateTaskSendMessageCompletedFn: func(context.Context, string, string) error {
+			mu.Lock()
+			completed++
+			mu.Unlock()
+			return nil
+		},
+	}
+	strategySvc := &fakeAwardStockService{
+		updateStrategyAwardStockBatchFn: func(_ context.Context, messages []strategy.AwardStockConsumeMessage) error {
+			mu.Lock()
+			defer mu.Unlock()
+			if len(messages) == 0 {
+				batchValidationErr = errors.New("UpdateStrategyAwardStockBatch() received empty batch")
+				return nil
+			}
+			for _, message := range messages[1:] {
+				if message.StrategyID != messages[0].StrategyID || message.AwardID != messages[0].AwardID {
+					batchValidationErr = errors.New("batch contains mixed strategy awards")
+					return nil
+				}
+			}
+			batchSizes = append(batchSizes, len(messages))
+			return nil
+		},
+	}
+
+	job := NewSendAwardMessage(taskSvc, nil, strategySvc, 1)
+	if err := job.ProcessTask(context.Background(), nil); err != nil {
+		t.Fatalf("ProcessTask() error = %v, want nil", err)
+	}
+	if batchValidationErr != nil {
+		t.Fatal(batchValidationErr)
+	}
+	sort.Ints(batchSizes)
+	if !reflect.DeepEqual(batchSizes, []int{1, 3}) {
+		t.Fatalf("stock batch sizes = %#v, want [1 3]", batchSizes)
+	}
+	if completed != len(tasks) {
+		t.Fatalf("completed calls = %d, want %d", completed, len(tasks))
+	}
+}
+
+// TestSendAwardMessageProcessTaskFailsWholeStockGroup 验证聚合库存事务失败时，同组所有
+// Outbox 任务都会进入 fail，且不会有任务被错误标记为 completed。
+func TestSendAwardMessageProcessTaskFailsWholeStockGroup(t *testing.T) {
+	stockErr := errors.New("batch stock update")
+	tasks := []*task.Task{
+		{UserID: "user-1", Topic: strategy.AwardStockSyncTopic, MessageID: "stock-1", Message: `{"user_id":"user-1","order_id":"order-1","strategy_id":100001,"award_id":101}`},
+		{UserID: "user-2", Topic: strategy.AwardStockSyncTopic, MessageID: "stock-2", Message: `{"user_id":"user-2","order_id":"order-2","strategy_id":100001,"award_id":101}`},
+	}
+	failed := 0
+	taskSvc := &fakeOutboxTaskService{
+		queryNoSendMessageTaskListFn: func(context.Context, int) ([]*task.Task, error) {
+			return tasks, nil
+		},
+		updateTaskSendMessageFailFn: func(context.Context, string, string) error {
+			failed++
+			return nil
+		},
+	}
+	strategySvc := &fakeAwardStockService{
+		updateStrategyAwardStockBatchFn: func(context.Context, []strategy.AwardStockConsumeMessage) error {
+			return stockErr
+		},
+	}
+
+	job := NewSendAwardMessage(taskSvc, nil, strategySvc, 1)
+	if err := job.ProcessTask(context.Background(), nil); err != nil {
+		t.Fatalf("ProcessTask() error = %v, want nil", err)
+	}
+	if failed != len(tasks) {
+		t.Fatalf("failed calls = %d, want %d", failed, len(tasks))
 	}
 }
 
@@ -252,9 +346,13 @@ func TestSendAwardMessageRouteTaskByTopicDispatchesSupportedTopics(t *testing.T)
 
 	t.Run("stock sync", func(t *testing.T) {
 		strategySvc := &fakeAwardStockService{
-			updateStrategyAwardStockFn: func(_ context.Context, userID string, orderID string, strategyID int64, awardID int64) error {
-				if userID != "user-1" || orderID != "order-1" || strategyID != 100001 || awardID != 101 {
-					t.Fatalf("UpdateStrategyAwardStock() args = (%q, %q, %d, %d), want user-1/order-1/100001/101", userID, orderID, strategyID, awardID)
+			updateStrategyAwardStockBatchFn: func(_ context.Context, messages []strategy.AwardStockConsumeMessage) error {
+				if len(messages) != 1 {
+					t.Fatalf("UpdateStrategyAwardStockBatch() size = %d, want 1", len(messages))
+				}
+				message := messages[0]
+				if message.UserID != "user-1" || message.OrderID != "order-1" || message.StrategyID != 100001 || message.AwardID != 101 {
+					t.Fatalf("UpdateStrategyAwardStockBatch() message = %#v, want user-1/order-1/100001/101", message)
 				}
 				return nil
 			},

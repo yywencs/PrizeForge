@@ -95,6 +95,11 @@ func (s *StrategyUsecase) UpdateStrategyAwardStock(ctx context.Context, userID s
 	return s.repo.UpdateStrategyAwardStock(ctx, userID, orderID, strategyID, awardID)
 }
 
+// UpdateStrategyAwardStockBatch 将同一策略奖品的库存同步消息批量交给仓储处理。
+func (s *StrategyUsecase) UpdateStrategyAwardStockBatch(ctx context.Context, messages []AwardStockConsumeMessage) error {
+	return s.repo.UpdateStrategyAwardStockBatch(ctx, messages)
+}
+
 // QueryStrategyAward 查询策略奖品配置（含 Sort），供上层复用已落库中奖结果时补全排序号。
 func (s *StrategyUsecase) QueryStrategyAward(ctx context.Context, strategyID int64, awardID int64) (*StrategyAward, error) {
 	return s.repo.QueryStrategyAward(ctx, strategyID, awardID)
