@@ -10,10 +10,10 @@ import (
 )
 
 type fakeTaskRepository struct {
-	queryNoSendMessageTaskListFn     func(context.Context, int) ([]*Task, error)
-	updateTaskSendMessageCompletedFn func(context.Context, string, string) error
-	updateTaskSendMessageFailFn      func(context.Context, string, string) error
-	sendMessageFn                    func(context.Context, string, *rabbitmq.BaseEvent) error
+	queryNoSendMessageTaskListFn          func(context.Context, int) ([]*Task, error)
+	updateTaskSendMessageCompletedBatchFn func(context.Context, int, []uint64) error
+	updateTaskSendMessageFailBatchFn      func(context.Context, int, []uint64) error
+	sendMessageFn                         func(context.Context, string, *rabbitmq.BaseEvent) error
 }
 
 func (f *fakeTaskRepository) QueryNoSendMessageTaskList(ctx context.Context, dbIndex int) ([]*Task, error) {
@@ -23,18 +23,18 @@ func (f *fakeTaskRepository) QueryNoSendMessageTaskList(ctx context.Context, dbI
 	return f.queryNoSendMessageTaskListFn(ctx, dbIndex)
 }
 
-func (f *fakeTaskRepository) UpdateTaskSendMessageCompleted(ctx context.Context, userID string, messageID string) error {
-	if f.updateTaskSendMessageCompletedFn == nil {
-		panic("unexpected UpdateTaskSendMessageCompleted call")
+func (f *fakeTaskRepository) UpdateTaskSendMessageCompletedBatch(ctx context.Context, dbIndex int, taskIDs []uint64) error {
+	if f.updateTaskSendMessageCompletedBatchFn == nil {
+		panic("unexpected UpdateTaskSendMessageCompletedBatch call")
 	}
-	return f.updateTaskSendMessageCompletedFn(ctx, userID, messageID)
+	return f.updateTaskSendMessageCompletedBatchFn(ctx, dbIndex, taskIDs)
 }
 
-func (f *fakeTaskRepository) UpdateTaskSendMessageFail(ctx context.Context, userID string, messageID string) error {
-	if f.updateTaskSendMessageFailFn == nil {
-		panic("unexpected UpdateTaskSendMessageFail call")
+func (f *fakeTaskRepository) UpdateTaskSendMessageFailBatch(ctx context.Context, dbIndex int, taskIDs []uint64) error {
+	if f.updateTaskSendMessageFailBatchFn == nil {
+		panic("unexpected UpdateTaskSendMessageFailBatch call")
 	}
-	return f.updateTaskSendMessageFailFn(ctx, userID, messageID)
+	return f.updateTaskSendMessageFailBatchFn(ctx, dbIndex, taskIDs)
 }
 
 func (f *fakeTaskRepository) SendMessage(ctx context.Context, topic string, event *rabbitmq.BaseEvent) error {
@@ -131,8 +131,8 @@ func TestTaskUsecaseSendMessagePropagatesRepositoryError(t *testing.T) {
 	}
 }
 
-// TestTaskUsecaseDelegatesQueryAndStateUpdates 验证 TaskUsecase 会把分库编号、用户 ID、
-// 消息 ID 原样传给仓储，并原样返回待发送任务以及查询和状态更新错误。
+// TestTaskUsecaseDelegatesQueryAndStateUpdates 验证 TaskUsecase 会把分库编号和任务 ID
+// 批次原样传给仓储，并原样返回待发送任务以及查询和状态更新错误。
 func TestTaskUsecaseDelegatesQueryAndStateUpdates(t *testing.T) {
 	queryErr := errors.New("query tasks")
 	completedErr := errors.New("complete task")
@@ -145,15 +145,15 @@ func TestTaskUsecaseDelegatesQueryAndStateUpdates(t *testing.T) {
 			}
 			return wantTasks, queryErr
 		},
-		updateTaskSendMessageCompletedFn: func(_ context.Context, userID string, messageID string) error {
-			if userID != "user-1" || messageID != "message-1" {
-				t.Fatalf("UpdateTaskSendMessageCompleted() args = (%q, %q), want (%q, %q)", userID, messageID, "user-1", "message-1")
+		updateTaskSendMessageCompletedBatchFn: func(_ context.Context, dbIndex int, taskIDs []uint64) error {
+			if dbIndex != 2 || len(taskIDs) != 2 || taskIDs[0] != 11 || taskIDs[1] != 12 {
+				t.Fatalf("UpdateTaskSendMessageCompletedBatch() args = (%d, %#v), want (2, [11 12])", dbIndex, taskIDs)
 			}
 			return completedErr
 		},
-		updateTaskSendMessageFailFn: func(_ context.Context, userID string, messageID string) error {
-			if userID != "user-1" || messageID != "message-1" {
-				t.Fatalf("UpdateTaskSendMessageFail() args = (%q, %q), want (%q, %q)", userID, messageID, "user-1", "message-1")
+		updateTaskSendMessageFailBatchFn: func(_ context.Context, dbIndex int, taskIDs []uint64) error {
+			if dbIndex != 1 || len(taskIDs) != 1 || taskIDs[0] != 21 {
+				t.Fatalf("UpdateTaskSendMessageFailBatch() args = (%d, %#v), want (1, [21])", dbIndex, taskIDs)
 			}
 			return failErr
 		},
@@ -164,10 +164,10 @@ func TestTaskUsecaseDelegatesQueryAndStateUpdates(t *testing.T) {
 	if !errors.Is(err, queryErr) || len(tasks) != 1 || tasks[0] != wantTasks[0] {
 		t.Fatalf("QueryNoSendMessageTaskList() = (%#v, %v), want (%#v, %v)", tasks, err, wantTasks, queryErr)
 	}
-	if err := usecase.UpdateTaskSendMessageCompleted(context.Background(), "user-1", "message-1"); !errors.Is(err, completedErr) {
-		t.Fatalf("UpdateTaskSendMessageCompleted() error = %v, want %v", err, completedErr)
+	if err := usecase.UpdateTaskSendMessageCompletedBatch(context.Background(), 2, []uint64{11, 12}); !errors.Is(err, completedErr) {
+		t.Fatalf("UpdateTaskSendMessageCompletedBatch() error = %v, want %v", err, completedErr)
 	}
-	if err := usecase.UpdateTaskSendMessageFail(context.Background(), "user-1", "message-1"); !errors.Is(err, failErr) {
-		t.Fatalf("UpdateTaskSendMessageFail() error = %v, want %v", err, failErr)
+	if err := usecase.UpdateTaskSendMessageFailBatch(context.Background(), 1, []uint64{21}); !errors.Is(err, failErr) {
+		t.Fatalf("UpdateTaskSendMessageFailBatch() error = %v, want %v", err, failErr)
 	}
 }

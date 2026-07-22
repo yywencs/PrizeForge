@@ -2,6 +2,7 @@ package taskrepo
 
 import (
 	"context"
+	"fmt"
 	"prizeforge/internal/domain/task"
 	"prizeforge/internal/infrastructure/adapter"
 	"prizeforge/internal/infrastructure/repository/po"
@@ -11,6 +12,7 @@ import (
 
 const failedTaskRetryDelay = 6 * time.Minute
 const outboxScanBatchSize = 500
+const outboxStateUpdateBatchSize = 500
 
 type TaskRepository struct {
 	routerDB  *adapter.DBRouter
@@ -27,7 +29,7 @@ func NewTaskRepository(routerDB *adapter.DBRouter, publisher *adapter.Publisher)
 func (r *TaskRepository) QueryNoSendMessageTaskList(ctx context.Context, dbIndx int) ([]*task.Task, error) {
 	db := r.routerDB.GetDB(dbIndx).WithContext(ctx)
 	retryBefore := time.Now().Add(-failedTaskRetryDelay)
-	columns := []string{"user_id", "topic", "message_id", "message"}
+	columns := []string{"id", "user_id", "topic", "message_id", "message"}
 
 	// 失败任务只有经过退避时间后才允许重试，避免下游故障时每轮调度反复发送。
 	var tasks []po.Task
@@ -63,22 +65,35 @@ func (r *TaskRepository) QueryNoSendMessageTaskList(ctx context.Context, dbIndx 
 	return result, nil
 }
 
-func (r *TaskRepository) UpdateTaskSendMessageCompleted(ctx context.Context, userID, messageID string) error {
-	db, _ := r.routerDB.DBStrategy(userID)
-
-	return db.WithContext(ctx).
-		Model(&po.Task{}).
-		Where("user_id = ? AND message_id = ?", userID, messageID).
-		Update("state", "completed").Error
+func (r *TaskRepository) UpdateTaskSendMessageCompletedBatch(ctx context.Context, dbIndex int, taskIDs []uint64) error {
+	return r.updateTaskStateBatch(ctx, dbIndex, taskIDs, "completed")
 }
 
-func (r *TaskRepository) UpdateTaskSendMessageFail(ctx context.Context, userID, messageID string) error {
-	db, _ := r.routerDB.DBStrategy(userID)
+func (r *TaskRepository) UpdateTaskSendMessageFailBatch(ctx context.Context, dbIndex int, taskIDs []uint64) error {
+	return r.updateTaskStateBatch(ctx, dbIndex, taskIDs, "fail")
+}
 
-	return db.WithContext(ctx).
-		Model(&po.Task{}).
-		Where("user_id = ? AND message_id = ?", userID, messageID).
-		Update("state", "fail").Error
+// updateTaskStateBatch 在指定分库内按主键批量更新 Outbox 状态。
+// 状态条件避免并发补偿把已经 completed 的任务重新降级为 fail。
+func (r *TaskRepository) updateTaskStateBatch(ctx context.Context, dbIndex int, taskIDs []uint64, state string) error {
+	if len(taskIDs) == 0 {
+		return nil
+	}
+	db := r.routerDB.GetDB(dbIndex)
+	if db == nil {
+		return fmt.Errorf("database shard %d is not configured", dbIndex)
+	}
+
+	for start := 0; start < len(taskIDs); start += outboxStateUpdateBatchSize {
+		end := min(start+outboxStateUpdateBatchSize, len(taskIDs))
+		if err := db.WithContext(ctx).
+			Model(&po.Task{}).
+			Where("id IN ? AND state IN ?", taskIDs[start:end], []string{"create", "fail"}).
+			Update("state", state).Error; err != nil {
+			return fmt.Errorf("update shard %d task state to %s: %w", dbIndex, state, err)
+		}
+	}
+	return nil
 }
 
 func (r *TaskRepository) SendMessage(ctx context.Context, topic string, event *rabbitmq.BaseEvent) error {

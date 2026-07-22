@@ -20,8 +20,8 @@ import (
 type outboxTaskService interface {
 	QueryNoSendMessageTaskList(context.Context, int) ([]*task.Task, error)
 	SendMessage(context.Context, *task.Task) error
-	UpdateTaskSendMessageCompleted(context.Context, string, string) error
-	UpdateTaskSendMessageFail(context.Context, string, string) error
+	UpdateTaskSendMessageCompletedBatch(context.Context, int, []uint64) error
+	UpdateTaskSendMessageFailBatch(context.Context, int, []uint64) error
 }
 
 // partakeOrderService 定义保存异步抽奖订单任务所需的能力。
@@ -44,10 +44,25 @@ type stockGroupKey struct {
 	awardID    int64
 }
 
+type scannedTask struct {
+	dbIndex int
+	task    *task.Task
+}
+
 type stockTaskGroup struct {
 	key      stockGroupKey
-	tasks    []*task.Task
+	tasks    []*scannedTask
 	messages []strategy.AwardStockConsumeMessage
+}
+
+type taskDispatchResult struct {
+	task *scannedTask
+	err  error
+}
+
+type taskStateBatch struct {
+	completedIDs []uint64
+	failedIDs    []uint64
 }
 
 // SendAwardMessage 定时扫描 task 表，将未发送的消息按 topic 分发。
@@ -100,46 +115,59 @@ func (j *SendAwardMessage) ProcessTask(ctx context.Context, _ *asynq.Task) error
 	}
 	defer j.scanMu.Unlock()
 
-	var scannedTasks []*task.Task
+	var scannedTasks []*scannedTask
 	for dbIdx := 1; dbIdx <= j.dbCount; dbIdx++ {
 		tasks, err := j.taskSvc.QueryNoSendMessageTaskList(ctx, dbIdx)
 		if err != nil {
 			return fmt.Errorf("查询分库%d未发送任务失败: %w", dbIdx, err)
 		}
-		scannedTasks = append(scannedTasks, tasks...)
+		for _, taskItem := range tasks {
+			scannedTasks = append(scannedTasks, &scannedTask{dbIndex: dbIdx, task: taskItem})
+		}
 	}
 
-	regularTasks, stockGroups := j.partitionTasks(ctx, scannedTasks)
+	regularTasks, stockGroups, results := j.partitionTasks(scannedTasks)
+	resultCh := make(chan taskDispatchResult, len(scannedTasks))
+	for _, result := range results {
+		resultCh <- result
+	}
+
 	var wg sync.WaitGroup
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		runBounded(regularTasks, outboxDispatchConcurrency, func(taskItem *task.Task) {
-			j.dispatchSingleTask(ctx, taskItem)
+		runBounded(regularTasks, outboxDispatchConcurrency, func(taskItem *scannedTask) {
+			resultCh <- taskDispatchResult{task: taskItem, err: j.dispatchSingleTask(ctx, taskItem.task)}
 		})
 	}()
 	go func() {
 		defer wg.Done()
 		runBounded(stockGroups, stockGroupConcurrency, func(group *stockTaskGroup) {
-			j.dispatchStockGroup(ctx, group)
+			err := j.dispatchStockGroup(ctx, group)
+			for _, taskItem := range group.tasks {
+				resultCh <- taskDispatchResult{task: taskItem, err: err}
+			}
 		})
 	}()
 	wg.Wait()
+	close(resultCh)
+	j.persistTaskResults(ctx, resultCh)
 	return nil
 }
 
-func (j *SendAwardMessage) partitionTasks(ctx context.Context, tasks []*task.Task) ([]*task.Task, []*stockTaskGroup) {
-	regularTasks := make([]*task.Task, 0, len(tasks))
+func (j *SendAwardMessage) partitionTasks(tasks []*scannedTask) ([]*scannedTask, []*stockTaskGroup, []taskDispatchResult) {
+	regularTasks := make([]*scannedTask, 0, len(tasks))
 	groups := make(map[stockGroupKey]*stockTaskGroup)
+	failedResults := make([]taskDispatchResult, 0)
 	for _, taskItem := range tasks {
-		if taskItem.Topic != strategy.AwardStockSyncTopic {
+		if taskItem.task.Topic != strategy.AwardStockSyncTopic {
 			regularTasks = append(regularTasks, taskItem)
 			continue
 		}
 
-		message, err := decodeStockSyncMessage(taskItem)
+		message, err := decodeStockSyncMessage(taskItem.task)
 		if err != nil {
-			j.failTask(ctx, taskItem, err)
+			failedResults = append(failedResults, taskDispatchResult{task: taskItem, err: err})
 			continue
 		}
 		key := stockGroupKey{strategyID: message.StrategyID, awardID: message.AwardID}
@@ -162,47 +190,61 @@ func (j *SendAwardMessage) partitionTasks(ctx context.Context, tasks []*task.Tas
 		}
 		return stockGroups[i].key.strategyID < stockGroups[k].key.strategyID
 	})
-	return regularTasks, stockGroups
+	return regularTasks, stockGroups, failedResults
 }
 
-func (j *SendAwardMessage) dispatchStockGroup(ctx context.Context, group *stockTaskGroup) {
-	if err := j.strategySvc.UpdateStrategyAwardStockBatch(ctx, group.messages); err != nil {
-		for _, taskItem := range group.tasks {
-			j.failTask(ctx, taskItem, err)
+func (j *SendAwardMessage) dispatchStockGroup(ctx context.Context, group *stockTaskGroup) error {
+	return j.strategySvc.UpdateStrategyAwardStockBatch(ctx, group.messages)
+}
+
+// dispatchSingleTask 处理单条普通任务，状态由本轮任务完成后统一批量回写。
+func (j *SendAwardMessage) dispatchSingleTask(ctx context.Context, t *task.Task) error {
+	return j.routeTaskByTopic(ctx, t)
+}
+
+// persistTaskResults 汇总本轮处理结果，并按分库分别批量写入 completed/fail 状态。
+func (j *SendAwardMessage) persistTaskResults(ctx context.Context, results <-chan taskDispatchResult) {
+	batches := make(map[int]*taskStateBatch, j.dbCount)
+	for result := range results {
+		if result.task == nil || result.task.task == nil {
+			logger.Error("Outbox 处理结果缺少任务")
+			continue
 		}
-		return
-	}
-	for _, taskItem := range group.tasks {
-		j.completeTask(ctx, taskItem)
-	}
-}
-
-// dispatchSingleTask 处理单条 task，保证状态闭环。
-//
-// 成功 → UpdateTaskSendMessageCompleted
-// 失败 → UpdateTaskSendMessageFail
-// 更新完成状态也失败 → 依然标记为 fail（下次扫描会重试，保证幂等）
-func (j *SendAwardMessage) dispatchSingleTask(ctx context.Context, t *task.Task) {
-	if err := j.routeTaskByTopic(ctx, t); err != nil {
-		j.failTask(ctx, t, err)
-		return
-	}
-	j.completeTask(ctx, t)
-}
-
-func (j *SendAwardMessage) completeTask(ctx context.Context, t *task.Task) {
-	if err := j.taskSvc.UpdateTaskSendMessageCompleted(ctx, t.UserID, t.MessageID); err != nil {
-		logger.Error("更新完成状态失败，降级标记为 fail", "messageID", t.MessageID, "err", err)
-		if failErr := j.taskSvc.UpdateTaskSendMessageFail(ctx, t.UserID, t.MessageID); failErr != nil {
-			logger.Error("更新失败状态失败", "messageID", t.MessageID, "err", failErr)
+		if result.task.task.ID == 0 {
+			logger.Error("Outbox 任务缺少主键，无法批量更新状态", "messageID", result.task.task.MessageID)
+			continue
 		}
-	}
-}
 
-func (j *SendAwardMessage) failTask(ctx context.Context, t *task.Task, cause error) {
-	logger.Warn("分发消息失败，标记为 fail", "messageID", t.MessageID, "err", cause)
-	if err := j.taskSvc.UpdateTaskSendMessageFail(ctx, t.UserID, t.MessageID); err != nil {
-		logger.Error("更新失败状态失败", "messageID", t.MessageID, "err", err)
+		batch := batches[result.task.dbIndex]
+		if batch == nil {
+			batch = &taskStateBatch{}
+			batches[result.task.dbIndex] = batch
+		}
+		if result.err != nil {
+			logger.Warn("分发消息失败，标记为 fail", "messageID", result.task.task.MessageID, "err", result.err)
+			batch.failedIDs = append(batch.failedIDs, result.task.task.ID)
+			continue
+		}
+		batch.completedIDs = append(batch.completedIDs, result.task.task.ID)
+	}
+
+	for dbIndex := 1; dbIndex <= j.dbCount; dbIndex++ {
+		batch := batches[dbIndex]
+		if batch == nil {
+			continue
+		}
+		failedIDs := batch.failedIDs
+		if len(batch.completedIDs) > 0 {
+			if err := j.taskSvc.UpdateTaskSendMessageCompletedBatch(ctx, dbIndex, batch.completedIDs); err != nil {
+				logger.Error("批量更新完成状态失败，降级标记为 fail", "dbIndex", dbIndex, "taskCount", len(batch.completedIDs), "err", err)
+				failedIDs = append(failedIDs, batch.completedIDs...)
+			}
+		}
+		if len(failedIDs) > 0 {
+			if err := j.taskSvc.UpdateTaskSendMessageFailBatch(ctx, dbIndex, failedIDs); err != nil {
+				logger.Error("批量更新失败状态失败", "dbIndex", dbIndex, "taskCount", len(failedIDs), "err", err)
+			}
+		}
 	}
 }
 

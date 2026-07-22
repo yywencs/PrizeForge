@@ -58,19 +58,22 @@ func TestTaskRepositoryScansExpiredFailuresThenCreatedTasks(t *testing.T) {
 		t.Fatalf("QueryNoSendMessageTaskList() count = %d, want 11", len(got))
 	}
 	for index, task := range got {
+		if task.ID == 0 {
+			t.Fatalf("task[%d].ID = 0, want persisted primary key", index)
+		}
 		if task.MessageID != wantMessageIDs[index] {
 			t.Fatalf("task[%d].MessageID = %q, want %q", index, task.MessageID, wantMessageIDs[index])
 		}
 	}
 }
 
-// TestTaskRepositoryUpdatesStateInUserShard 验证 completed 和 fail 状态更新会根据 userID
-// 定位到正确分库；即使两个分库存在相同 message_id，也只更新目标用户所在库的记录。
-func TestTaskRepositoryUpdatesStateInUserShard(t *testing.T) {
+// TestTaskRepositoryUpdatesStateBatchInSpecifiedShard 验证 completed 和 fail 会根据显式
+// 分库编号及任务主键批量更新；即使两个分库存在相同 message_id，也不会跨库修改记录。
+func TestTaskRepositoryUpdatesStateBatchInSpecifiedShard(t *testing.T) {
 	seed := xrand.RandomNumeric(12)
 	userDB01 := findIntegrationUserForDB(t, 1, "t1"+seed)
 	userDB02 := findIntegrationUserForDB(t, 2, "t2"+seed)
-	messageID := "it-task-state-" + seed
+	messageIDs := []string{"it-task-a-" + seed, "it-task-b-" + seed}
 	now := time.Now().Truncate(time.Second)
 
 	db01 := integrationDBRouter.GetDB(1)
@@ -79,25 +82,37 @@ func TestTaskRepositoryUpdatesStateInUserShard(t *testing.T) {
 		deleteIntegrationRows(t, db01, "task", "user_id", userDB01)
 		deleteIntegrationRows(t, db02, "task", "user_id", userDB02)
 	})
-	taskDB01 := newIntegrationTask(userDB01, messageID, "create", now)
-	taskDB02 := newIntegrationTask(userDB02, messageID, "create", now)
-	if err := db01.Create(&taskDB01).Error; err != nil {
-		t.Fatalf("prepare database 01 task: %v", err)
+	tasksDB01 := []po.Task{
+		newIntegrationTask(userDB01, messageIDs[0], "create", now),
+		newIntegrationTask(userDB01, messageIDs[1], "create", now),
 	}
-	if err := db02.Create(&taskDB02).Error; err != nil {
-		t.Fatalf("prepare database 02 task: %v", err)
+	tasksDB02 := []po.Task{
+		newIntegrationTask(userDB02, messageIDs[0], "create", now),
+		newIntegrationTask(userDB02, messageIDs[1], "create", now),
+	}
+	if err := db01.Create(&tasksDB01).Error; err != nil {
+		t.Fatalf("prepare database 01 tasks: %v", err)
+	}
+	if err := db02.Create(&tasksDB02).Error; err != nil {
+		t.Fatalf("prepare database 02 tasks: %v", err)
 	}
 
 	repository := taskrepo.NewTaskRepository(integrationDBRouter, nil)
-	if err := repository.UpdateTaskSendMessageCompleted(context.Background(), userDB01, messageID); err != nil {
-		t.Fatalf("UpdateTaskSendMessageCompleted() error = %v, want nil", err)
+	if err := repository.UpdateTaskSendMessageCompletedBatch(context.Background(), 1, []uint64{tasksDB01[0].ID, tasksDB01[1].ID}); err != nil {
+		t.Fatalf("UpdateTaskSendMessageCompletedBatch() error = %v, want nil", err)
 	}
-	if err := repository.UpdateTaskSendMessageFail(context.Background(), userDB02, messageID); err != nil {
-		t.Fatalf("UpdateTaskSendMessageFail() error = %v, want nil", err)
+	if err := repository.UpdateTaskSendMessageFailBatch(context.Background(), 2, []uint64{tasksDB02[0].ID, tasksDB02[1].ID}); err != nil {
+		t.Fatalf("UpdateTaskSendMessageFailBatch() error = %v, want nil", err)
+	}
+	// 已完成任务不能被并发或迟到的失败补偿重新降级。
+	if err := repository.UpdateTaskSendMessageFailBatch(context.Background(), 1, []uint64{tasksDB01[0].ID, tasksDB01[1].ID}); err != nil {
+		t.Fatalf("UpdateTaskSendMessageFailBatch() completed guard error = %v, want nil", err)
 	}
 
-	assertIntegrationTaskState(t, db01, userDB01, messageID, "completed")
-	assertIntegrationTaskState(t, db02, userDB02, messageID, "fail")
+	for _, messageID := range messageIDs {
+		assertIntegrationTaskState(t, db01, userDB01, messageID, "completed")
+		assertIntegrationTaskState(t, db02, userDB02, messageID, "fail")
+	}
 }
 
 func newIntegrationTask(userID, messageID, state string, updateTime time.Time) po.Task {

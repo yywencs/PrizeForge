@@ -7,7 +7,7 @@ import (
 
 type Repo interface {
 	QueryNoSendMessageTaskList(ctx context.Context, dbIndx int) ([]*Task, error)
-	UpdateTaskSendMessageCompleted(ctx context.Context, userID, messageID string) error
-	UpdateTaskSendMessageFail(ctx context.Context, userID, messageID string) error
+	UpdateTaskSendMessageCompletedBatch(ctx context.Context, dbIndex int, taskIDs []uint64) error
+	UpdateTaskSendMessageFailBatch(ctx context.Context, dbIndex int, taskIDs []uint64) error
 	SendMessage(ctx context.Context, topic string, event *rabbitmq.BaseEvent) error
 }

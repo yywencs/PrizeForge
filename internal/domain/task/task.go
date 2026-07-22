@@ -42,10 +42,10 @@ func (s *TaskUsecase) SendMessage(ctx context.Context, task *Task) error {
 	return nil
 }
 
-func (s *TaskUsecase) UpdateTaskSendMessageCompleted(ctx context.Context, userID, messageID string) error {
-	return s.taskRepository.UpdateTaskSendMessageCompleted(ctx, userID, messageID)
+func (s *TaskUsecase) UpdateTaskSendMessageCompletedBatch(ctx context.Context, dbIndex int, taskIDs []uint64) error {
+	return s.taskRepository.UpdateTaskSendMessageCompletedBatch(ctx, dbIndex, taskIDs)
 }
 
-func (s *TaskUsecase) UpdateTaskSendMessageFail(ctx context.Context, userID, messageID string) error {
-	return s.taskRepository.UpdateTaskSendMessageFail(ctx, userID, messageID)
+func (s *TaskUsecase) UpdateTaskSendMessageFailBatch(ctx context.Context, dbIndex int, taskIDs []uint64) error {
+	return s.taskRepository.UpdateTaskSendMessageFailBatch(ctx, dbIndex, taskIDs)
 }

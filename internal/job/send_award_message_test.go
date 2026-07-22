@@ -15,10 +15,10 @@ import (
 )
 
 type fakeOutboxTaskService struct {
-	queryNoSendMessageTaskListFn     func(context.Context, int) ([]*task.Task, error)
-	sendMessageFn                    func(context.Context, *task.Task) error
-	updateTaskSendMessageCompletedFn func(context.Context, string, string) error
-	updateTaskSendMessageFailFn      func(context.Context, string, string) error
+	queryNoSendMessageTaskListFn          func(context.Context, int) ([]*task.Task, error)
+	sendMessageFn                         func(context.Context, *task.Task) error
+	updateTaskSendMessageCompletedBatchFn func(context.Context, int, []uint64) error
+	updateTaskSendMessageFailBatchFn      func(context.Context, int, []uint64) error
 }
 
 func (f *fakeOutboxTaskService) QueryNoSendMessageTaskList(ctx context.Context, dbIndex int) ([]*task.Task, error) {
@@ -35,18 +35,18 @@ func (f *fakeOutboxTaskService) SendMessage(ctx context.Context, taskItem *task.
 	return f.sendMessageFn(ctx, taskItem)
 }
 
-func (f *fakeOutboxTaskService) UpdateTaskSendMessageCompleted(ctx context.Context, userID string, messageID string) error {
-	if f.updateTaskSendMessageCompletedFn == nil {
-		panic("unexpected UpdateTaskSendMessageCompleted call")
+func (f *fakeOutboxTaskService) UpdateTaskSendMessageCompletedBatch(ctx context.Context, dbIndex int, taskIDs []uint64) error {
+	if f.updateTaskSendMessageCompletedBatchFn == nil {
+		panic("unexpected UpdateTaskSendMessageCompletedBatch call")
 	}
-	return f.updateTaskSendMessageCompletedFn(ctx, userID, messageID)
+	return f.updateTaskSendMessageCompletedBatchFn(ctx, dbIndex, taskIDs)
 }
 
-func (f *fakeOutboxTaskService) UpdateTaskSendMessageFail(ctx context.Context, userID string, messageID string) error {
-	if f.updateTaskSendMessageFailFn == nil {
-		panic("unexpected UpdateTaskSendMessageFail call")
+func (f *fakeOutboxTaskService) UpdateTaskSendMessageFailBatch(ctx context.Context, dbIndex int, taskIDs []uint64) error {
+	if f.updateTaskSendMessageFailBatchFn == nil {
+		panic("unexpected UpdateTaskSendMessageFailBatch call")
 	}
-	return f.updateTaskSendMessageFailFn(ctx, userID, messageID)
+	return f.updateTaskSendMessageFailBatchFn(ctx, dbIndex, taskIDs)
 }
 
 type fakePartakeOrderService struct {
@@ -126,7 +126,7 @@ func TestSendAwardMessageProcessTaskStopsOnQueryFailure(t *testing.T) {
 // TestSendAwardMessageProcessTaskDispatchesAndWaits 验证扫描得到的任务会进入异步分发，
 // ProcessTask 会等待分发和 completed 状态更新结束后再返回，避免调度轮次提前退出。
 func TestSendAwardMessageProcessTaskDispatchesAndWaits(t *testing.T) {
-	taskItem := &task.Task{UserID: "user-1", Topic: award.SendAwardTopic, MessageID: "message-1"}
+	taskItem := &task.Task{ID: 101, UserID: "user-1", Topic: award.SendAwardTopic, MessageID: "message-1"}
 	var sentTask *task.Task
 	completedCalls := 0
 	taskSvc := &fakeOutboxTaskService{
@@ -137,9 +137,9 @@ func TestSendAwardMessageProcessTaskDispatchesAndWaits(t *testing.T) {
 			sentTask = got
 			return nil
 		},
-		updateTaskSendMessageCompletedFn: func(_ context.Context, userID string, messageID string) error {
-			if userID != "user-1" || messageID != "message-1" {
-				t.Errorf("UpdateTaskSendMessageCompleted() args = (%q, %q), want user-1/message-1", userID, messageID)
+		updateTaskSendMessageCompletedBatchFn: func(_ context.Context, dbIndex int, taskIDs []uint64) error {
+			if dbIndex != 1 || !reflect.DeepEqual(taskIDs, []uint64{101}) {
+				t.Errorf("UpdateTaskSendMessageCompletedBatch() args = (%d, %#v), want (1, [101])", dbIndex, taskIDs)
 			}
 			completedCalls++
 			return nil
@@ -157,26 +157,30 @@ func TestSendAwardMessageProcessTaskDispatchesAndWaits(t *testing.T) {
 	}
 }
 
-// TestSendAwardMessageProcessTaskGroupsStockByAward 验证同一策略奖品的库存任务会合并为
-// 一次批量调用，不同奖品可以作为独立组处理，并在批量同步成功后逐条关闭 Outbox 状态。
+// TestSendAwardMessageProcessTaskGroupsStockByAward 验证跨分库的同一策略奖品库存任务会
+// 合并为一次业务批量调用，而处理结果仍按原始分库分别批量关闭 Outbox 状态。
 func TestSendAwardMessageProcessTaskGroupsStockByAward(t *testing.T) {
-	tasks := []*task.Task{
-		{UserID: "user-1", Topic: strategy.AwardStockSyncTopic, MessageID: "stock-1", Message: `{"user_id":"user-1","order_id":"order-1","strategy_id":100001,"award_id":101}`},
-		{UserID: "user-2", Topic: strategy.AwardStockSyncTopic, MessageID: "stock-2", Message: `{"user_id":"user-2","order_id":"order-2","strategy_id":100001,"award_id":101}`},
-		{UserID: "user-3", Topic: strategy.AwardStockSyncTopic, MessageID: "stock-3", Message: `{"user_id":"user-3","order_id":"order-3","strategy_id":100001,"award_id":101}`},
-		{UserID: "user-4", Topic: strategy.AwardStockSyncTopic, MessageID: "stock-4", Message: `{"user_id":"user-4","order_id":"order-4","strategy_id":100001,"award_id":102}`},
+	tasksByDB := map[int][]*task.Task{
+		1: {
+			{ID: 11, UserID: "user-1", Topic: strategy.AwardStockSyncTopic, MessageID: "stock-1", Message: `{"user_id":"user-1","order_id":"order-1","strategy_id":100001,"award_id":101}`},
+			{ID: 12, UserID: "user-2", Topic: strategy.AwardStockSyncTopic, MessageID: "stock-2", Message: `{"user_id":"user-2","order_id":"order-2","strategy_id":100001,"award_id":101}`},
+		},
+		2: {
+			{ID: 21, UserID: "user-3", Topic: strategy.AwardStockSyncTopic, MessageID: "stock-3", Message: `{"user_id":"user-3","order_id":"order-3","strategy_id":100001,"award_id":101}`},
+			{ID: 22, UserID: "user-4", Topic: strategy.AwardStockSyncTopic, MessageID: "stock-4", Message: `{"user_id":"user-4","order_id":"order-4","strategy_id":100001,"award_id":102}`},
+		},
 	}
 	var mu sync.Mutex
 	var batchSizes []int
 	var batchValidationErr error
-	completed := 0
+	completedByDB := make(map[int][]uint64)
 	taskSvc := &fakeOutboxTaskService{
-		queryNoSendMessageTaskListFn: func(context.Context, int) ([]*task.Task, error) {
-			return tasks, nil
+		queryNoSendMessageTaskListFn: func(_ context.Context, dbIndex int) ([]*task.Task, error) {
+			return tasksByDB[dbIndex], nil
 		},
-		updateTaskSendMessageCompletedFn: func(context.Context, string, string) error {
+		updateTaskSendMessageCompletedBatchFn: func(_ context.Context, dbIndex int, taskIDs []uint64) error {
 			mu.Lock()
-			completed++
+			completedByDB[dbIndex] = append([]uint64(nil), taskIDs...)
 			mu.Unlock()
 			return nil
 		},
@@ -200,7 +204,7 @@ func TestSendAwardMessageProcessTaskGroupsStockByAward(t *testing.T) {
 		},
 	}
 
-	job := NewSendAwardMessage(taskSvc, nil, strategySvc, 1)
+	job := NewSendAwardMessage(taskSvc, nil, strategySvc, 2)
 	if err := job.ProcessTask(context.Background(), nil); err != nil {
 		t.Fatalf("ProcessTask() error = %v, want nil", err)
 	}
@@ -211,8 +215,12 @@ func TestSendAwardMessageProcessTaskGroupsStockByAward(t *testing.T) {
 	if !reflect.DeepEqual(batchSizes, []int{1, 3}) {
 		t.Fatalf("stock batch sizes = %#v, want [1 3]", batchSizes)
 	}
-	if completed != len(tasks) {
-		t.Fatalf("completed calls = %d, want %d", completed, len(tasks))
+	for dbIndex, wantIDs := range map[int][]uint64{1: {11, 12}, 2: {21, 22}} {
+		gotIDs := completedByDB[dbIndex]
+		sort.Slice(gotIDs, func(i, j int) bool { return gotIDs[i] < gotIDs[j] })
+		if !reflect.DeepEqual(gotIDs, wantIDs) {
+			t.Fatalf("completed IDs for database %d = %#v, want %#v", dbIndex, gotIDs, wantIDs)
+		}
 	}
 }
 
@@ -221,16 +229,19 @@ func TestSendAwardMessageProcessTaskGroupsStockByAward(t *testing.T) {
 func TestSendAwardMessageProcessTaskFailsWholeStockGroup(t *testing.T) {
 	stockErr := errors.New("batch stock update")
 	tasks := []*task.Task{
-		{UserID: "user-1", Topic: strategy.AwardStockSyncTopic, MessageID: "stock-1", Message: `{"user_id":"user-1","order_id":"order-1","strategy_id":100001,"award_id":101}`},
-		{UserID: "user-2", Topic: strategy.AwardStockSyncTopic, MessageID: "stock-2", Message: `{"user_id":"user-2","order_id":"order-2","strategy_id":100001,"award_id":101}`},
+		{ID: 1, UserID: "user-1", Topic: strategy.AwardStockSyncTopic, MessageID: "stock-1", Message: `{"user_id":"user-1","order_id":"order-1","strategy_id":100001,"award_id":101}`},
+		{ID: 2, UserID: "user-2", Topic: strategy.AwardStockSyncTopic, MessageID: "stock-2", Message: `{"user_id":"user-2","order_id":"order-2","strategy_id":100001,"award_id":101}`},
 	}
-	failed := 0
+	var failedIDs []uint64
 	taskSvc := &fakeOutboxTaskService{
 		queryNoSendMessageTaskListFn: func(context.Context, int) ([]*task.Task, error) {
 			return tasks, nil
 		},
-		updateTaskSendMessageFailFn: func(context.Context, string, string) error {
-			failed++
+		updateTaskSendMessageFailBatchFn: func(_ context.Context, dbIndex int, taskIDs []uint64) error {
+			if dbIndex != 1 {
+				t.Fatalf("UpdateTaskSendMessageFailBatch() dbIndex = %d, want 1", dbIndex)
+			}
+			failedIDs = append([]uint64(nil), taskIDs...)
 			return nil
 		},
 	}
@@ -244,63 +255,93 @@ func TestSendAwardMessageProcessTaskFailsWholeStockGroup(t *testing.T) {
 	if err := job.ProcessTask(context.Background(), nil); err != nil {
 		t.Fatalf("ProcessTask() error = %v, want nil", err)
 	}
-	if failed != len(tasks) {
-		t.Fatalf("failed calls = %d, want %d", failed, len(tasks))
+	sort.Slice(failedIDs, func(i, j int) bool { return failedIDs[i] < failedIDs[j] })
+	if !reflect.DeepEqual(failedIDs, []uint64{1, 2}) {
+		t.Fatalf("failed IDs = %#v, want [1 2]", failedIDs)
 	}
 }
 
-// TestSendAwardMessageDispatchSingleTaskClosesStateLoop 验证消息分发成功后标记 completed，
-// 分发失败时标记 fail，completed 更新失败时也降级为 fail，保证任务始终能够被再次补偿。
-func TestSendAwardMessageDispatchSingleTaskClosesStateLoop(t *testing.T) {
+// TestSendAwardMessageProcessTaskBatchesResultsByShard 验证普通任务发送失败和损坏的库存
+// 消息都会与成功任务分开收集，并按原始分库各执行一次 completed/fail 批量更新。
+func TestSendAwardMessageProcessTaskBatchesResultsByShard(t *testing.T) {
 	dispatchErr := errors.New("dispatch task")
-	completedErr := errors.New("complete task")
-	tests := []struct {
-		name          string
-		sendErr       error
-		completedErr  error
-		wantCompleted int
-		wantFailed    int
-	}{
-		{name: "dispatch success", wantCompleted: 1},
-		{name: "dispatch failure", sendErr: dispatchErr, wantFailed: 1},
-		{name: "completed update failure", completedErr: completedErr, wantCompleted: 1, wantFailed: 1},
+	tasksByDB := map[int][]*task.Task{
+		1: {
+			{ID: 11, UserID: "user-11", Topic: award.SendAwardTopic, MessageID: "message-11"},
+			{ID: 12, UserID: "user-12", Topic: award.SendAwardTopic, MessageID: "message-12"},
+		},
+		2: {
+			{ID: 21, UserID: "user-21", Topic: award.SendAwardTopic, MessageID: "message-21"},
+			{ID: 22, UserID: "user-22", Topic: strategy.AwardStockSyncTopic, MessageID: "message-22", Message: "{"},
+		},
+	}
+	completedByDB := make(map[int][]uint64)
+	failedByDB := make(map[int][]uint64)
+	taskSvc := &fakeOutboxTaskService{
+		queryNoSendMessageTaskListFn: func(_ context.Context, dbIndex int) ([]*task.Task, error) {
+			return tasksByDB[dbIndex], nil
+		},
+		sendMessageFn: func(_ context.Context, taskItem *task.Task) error {
+			if taskItem.ID == 12 {
+				return dispatchErr
+			}
+			return nil
+		},
+		updateTaskSendMessageCompletedBatchFn: func(_ context.Context, dbIndex int, taskIDs []uint64) error {
+			completedByDB[dbIndex] = append([]uint64(nil), taskIDs...)
+			return nil
+		},
+		updateTaskSendMessageFailBatchFn: func(_ context.Context, dbIndex int, taskIDs []uint64) error {
+			failedByDB[dbIndex] = append([]uint64(nil), taskIDs...)
+			return nil
+		},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			completedCalls := 0
-			failedCalls := 0
-			taskItem := &task.Task{UserID: "user-1", Topic: award.SendAwardTopic, MessageID: "message-1"}
-			taskSvc := &fakeOutboxTaskService{
-				sendMessageFn: func(_ context.Context, got *task.Task) error {
-					if got != taskItem {
-						t.Errorf("SendMessage() task = %p, want %p", got, taskItem)
-					}
-					return tt.sendErr
-				},
-				updateTaskSendMessageCompletedFn: func(_ context.Context, userID string, messageID string) error {
-					completedCalls++
-					if userID != "user-1" || messageID != "message-1" {
-						t.Errorf("UpdateTaskSendMessageCompleted() args = (%q, %q), want user-1/message-1", userID, messageID)
-					}
-					return tt.completedErr
-				},
-				updateTaskSendMessageFailFn: func(_ context.Context, userID string, messageID string) error {
-					failedCalls++
-					if userID != "user-1" || messageID != "message-1" {
-						t.Errorf("UpdateTaskSendMessageFail() args = (%q, %q), want user-1/message-1", userID, messageID)
-					}
-					return nil
-				},
-			}
-			job := NewSendAwardMessage(taskSvc, nil, nil, 1)
+	job := NewSendAwardMessage(taskSvc, nil, nil, 2)
+	if err := job.ProcessTask(context.Background(), nil); err != nil {
+		t.Fatalf("ProcessTask() error = %v, want nil", err)
+	}
 
-			job.dispatchSingleTask(context.Background(), taskItem)
+	for dbIndex, wantIDs := range map[int][]uint64{1: {11}, 2: {21}} {
+		if !reflect.DeepEqual(completedByDB[dbIndex], wantIDs) {
+			t.Fatalf("completed IDs for database %d = %#v, want %#v", dbIndex, completedByDB[dbIndex], wantIDs)
+		}
+	}
+	for dbIndex, wantIDs := range map[int][]uint64{1: {12}, 2: {22}} {
+		if !reflect.DeepEqual(failedByDB[dbIndex], wantIDs) {
+			t.Fatalf("failed IDs for database %d = %#v, want %#v", dbIndex, failedByDB[dbIndex], wantIDs)
+		}
+	}
+}
 
-			if completedCalls != tt.wantCompleted || failedCalls != tt.wantFailed {
-				t.Fatalf("state update calls = (completed=%d, fail=%d), want (%d, %d)", completedCalls, failedCalls, tt.wantCompleted, tt.wantFailed)
+// TestSendAwardMessageProcessTaskFallsBackToFailBatch 验证 completed 批量更新失败时，
+// 对应任务会降级进入 fail 批次，确保下一轮扫描仍能补偿。
+func TestSendAwardMessageProcessTaskFallsBackToFailBatch(t *testing.T) {
+	completedErr := errors.New("complete batch")
+	var failedIDs []uint64
+	taskSvc := &fakeOutboxTaskService{
+		queryNoSendMessageTaskListFn: func(context.Context, int) ([]*task.Task, error) {
+			return []*task.Task{{ID: 31, UserID: "user-31", Topic: award.SendAwardTopic, MessageID: "message-31"}}, nil
+		},
+		sendMessageFn: func(context.Context, *task.Task) error { return nil },
+		updateTaskSendMessageCompletedBatchFn: func(context.Context, int, []uint64) error {
+			return completedErr
+		},
+		updateTaskSendMessageFailBatchFn: func(_ context.Context, dbIndex int, taskIDs []uint64) error {
+			if dbIndex != 1 {
+				t.Fatalf("UpdateTaskSendMessageFailBatch() dbIndex = %d, want 1", dbIndex)
 			}
-		})
+			failedIDs = append([]uint64(nil), taskIDs...)
+			return nil
+		},
+	}
+
+	job := NewSendAwardMessage(taskSvc, nil, nil, 1)
+	if err := job.ProcessTask(context.Background(), nil); err != nil {
+		t.Fatalf("ProcessTask() error = %v, want nil", err)
+	}
+	if !reflect.DeepEqual(failedIDs, []uint64{31}) {
+		t.Fatalf("failed IDs = %#v, want [31]", failedIDs)
 	}
 }
 
