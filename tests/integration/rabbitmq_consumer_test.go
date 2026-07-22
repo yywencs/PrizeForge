@@ -90,6 +90,63 @@ func TestRabbitMQConsumerDispatchesStockZeroEventAndAcknowledges(t *testing.T) {
 	}
 }
 
+// TestRabbitMQConsumerSynchronizesReservedQuotaAndAcknowledges 验证 Redis Lua 预占额度后，
+// save_order_record 消息会通过真实 RabbitMQ 将数据库总、月、日额度各扣一次并标记同步完成。
+func TestRabbitMQConsumerSynchronizesReservedQuotaAndAcknowledges(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	fixture := newActivityOrderFixture(t, 3, 3, 3)
+	repository := fixture.repository()
+	order, reused, err := repository.CreateOrLoadUserRaffleOrder(
+		ctx,
+		fixture.order(xrand.RandomNumeric(12), "request-"+xrand.RandomNumeric(12)),
+	)
+	if err != nil {
+		t.Fatalf("reserve activity quota and create order: %v", err)
+	}
+	if reused {
+		t.Fatal("first activity order reused = true, want false")
+	}
+
+	topic := activity.SaveOrderRecordTopic
+	trackIntegrationRabbitMQTopology(t, topic)
+	connection, err := adapter.NewConnection(integrationRabbitMQConfig)
+	if err != nil {
+		t.Fatalf("connect RabbitMQ quota synchronization test: %v", err)
+	}
+	consumer := listener.NewRabbitMQConsumer(connection, nil, nil, nil)
+	t.Cleanup(consumer.Shutdown)
+	partakeUsecase := activity.NewActivityPartakeUsecase(repository)
+	recordingListener := newIntegrationRecordingListener(listener.NewSaveOrderListener(partakeUsecase), 1)
+	consumer.RegisterListener(topic, recordingListener)
+	if err := consumer.Start(ctx); err != nil {
+		t.Fatalf("start quota synchronization consumer: %v", err)
+	}
+
+	rabbitPublisher, err := adapter.NewRabbitMQPublisher(connection)
+	if err != nil {
+		t.Fatalf("create quota synchronization publisher: %v", err)
+	}
+	publisher := adapter.NewPublisher(rabbitPublisher, integrationRabbitMQConfig)
+	event := rabbitmq.NewBaseEvent(&activity.CreatePartakeOrder{
+		UserID:          fixture.userID,
+		ActivityID:      integrationOrderActivityID,
+		UserRaffleOrder: order,
+	})
+	if err := publisher.PublishSaveOrder(ctx, event); err != nil {
+		t.Fatalf("publish quota synchronization event: %v", err)
+	}
+	call := waitIntegrationListenerCall(t, ctx, recordingListener.calls)
+	if call.retry || call.err != nil {
+		t.Fatalf("quota synchronization listener = retry:%t err:%v, want success", call.retry, call.err)
+	}
+
+	assertActivityOrderSyncState(t, fixture, order.OrderID, activity.AccountSyncStateCompleted)
+	assertActivityAccountState(t, fixture, 2, 2, 2, "")
+	assertActivityPeriodQuota(t, fixture, 2, 2)
+}
+
 // TestRabbitMQConsumerRequeuesRetryableFailure 验证 Listener 报告临时错误时，Consumer 会
 // NACK 并重新入队；同一条消息第二次处理成功后才能完成消费。
 func TestRabbitMQConsumerRequeuesRetryableFailure(t *testing.T) {

@@ -21,6 +21,7 @@ type PartakeRepository interface {
 	CreateOrLoadUserRaffleOrder(ctx context.Context, order *UserRaffleOrder) (*UserRaffleOrder, bool, error)
 	TryClaimUserRaffleOrder(ctx context.Context, userID string, orderID string) (*DrawClaim, error)
 	ReleaseUserRaffleOrderClaim(ctx context.Context, userID string, orderID string, owner string) error
+	AsyncSaveCreatePartakeOrderAggregate(ctx context.Context, aggregate *CreatePartakeOrder) error
 	SaveCreatePartakeOrderAggregate(ctx context.Context, aggregate *CreatePartakeOrder) error
 }
 
@@ -70,12 +71,20 @@ func (s *ActivityPartakeUsecase) CreateOrder(ctx context.Context, partake *Parta
 		return nil, err
 	}
 
-	return &CreatePartakeOrder{
+	aggregate = &CreatePartakeOrder{
 		UserID:          userID,
 		ActivityID:      activityID,
 		UserRaffleOrder: userRaffleOrder,
 		Reused:          reused,
-	}, nil
+	}
+	// Redis 已经完成额度预占；在进入抽奖前可靠投递数据库额度同步事件。
+	// 发布失败时保留 pending reservation，同 request_id 重试不会再次扣减额度。
+	if userRaffleOrder.AccountSyncState != AccountSyncStateCompleted {
+		if err := s.repo.AsyncSaveCreatePartakeOrderAggregate(ctx, aggregate); err != nil {
+			return nil, err
+		}
+	}
+	return aggregate, nil
 }
 
 func (s *ActivityPartakeUsecase) TryClaimDraw(ctx context.Context, userID string, orderID string) (*DrawClaim, error) {

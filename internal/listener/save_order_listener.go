@@ -12,10 +12,10 @@ import (
 
 // SaveOrderListener 监听保存订单消息。
 //
-// 当抽奖完成后，系统通过 RabbitMQ fanout exchange
-// "save_order_record" 广播订单持久化事件。
+// Redis 原子预占抽奖额度并创建轻量订单后，系统通过 RabbitMQ fanout exchange
+// "save_order_record" 广播数据库额度同步事件。
 // 本 Listener 消费该事件，调用 ActivityPartakeUsecase.SaveOrderRecord
-// 将抽奖订单写入数据库（包含订单状态、账户额度扣减等）。
+// 将订单对应的总、月、日额度扣减同步到数据库，并幂等更新 account_sync_state。
 //
 // 消息体为 rabbitmq.BaseEvent 信封，Data 字段为 CreatePartakeOrder 聚合。
 type SaveOrderListener struct {

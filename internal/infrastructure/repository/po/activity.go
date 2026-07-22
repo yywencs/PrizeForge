@@ -228,16 +228,17 @@ func (p *RaffleActivityAccountMonth) ToEntity() *activity.ActivityAccountMonth {
 
 func (p *UserRaffleOrder) ToEntity() *activity.UserRaffleOrder {
 	return &activity.UserRaffleOrder{
-		UserID:       p.UserID,
-		ActivityID:   p.ActivityID,
-		ActivityName: p.ActivityName,
-		StrategyID:   p.StrategyID,
-		OrderID:      p.OrderID,
-		RequestID:    p.RequestID,
-		OrderTime:    p.OrderTime,
-		OrderState:   activity.UserRaffleOrderState(p.OrderState),
-		DrawState:    activity.DrawState(p.DrawState),
-		ProcessingAt: p.ProcessingAt,
-		DrawOwner:    p.DrawOwner,
+		UserID:           p.UserID,
+		ActivityID:       p.ActivityID,
+		ActivityName:     p.ActivityName,
+		StrategyID:       p.StrategyID,
+		OrderID:          p.OrderID,
+		RequestID:        p.RequestID,
+		OrderTime:        p.OrderTime,
+		OrderState:       activity.UserRaffleOrderState(p.OrderState),
+		DrawState:        activity.DrawState(p.DrawState),
+		ProcessingAt:     p.ProcessingAt,
+		DrawOwner:        p.DrawOwner,
+		AccountSyncState: activity.AccountSyncState(p.AccountSyncState),
 	}
 }

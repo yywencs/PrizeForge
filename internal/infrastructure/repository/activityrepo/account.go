@@ -192,8 +192,7 @@ func (d *Repository) AssembleActivityAccountByActivityId(ctx context.Context, ac
 }
 
 func (d *Repository) cacheActivityAccountSnapshot(ctx context.Context, activityAccount *activity.ActivityAccount) error {
-	month := time.Now().Format("2006-01")
-	day := time.Now().Format("2006-01-02")
+	currentTime := time.Now()
 
 	key := adapter.GetActivityAccountKey(activityAccount.ActivityID, activityAccount.UserID)
 	if err := d.redis.Set(&cache.Item{
@@ -205,35 +204,13 @@ func (d *Repository) cacheActivityAccountSnapshot(ctx context.Context, activityA
 		return err
 	}
 
-	totalKey := adapter.GetActivityAccountTotalSurplusKey(activityAccount.ActivityID, activityAccount.UserID)
-	if err := d.redis.Set(&cache.Item{
-		Ctx:   ctx,
-		Key:   totalKey,
-		Value: activityAccount.TotalCountSurplus,
-		TTL:   time.Hour,
-	}); err != nil {
-		return err
-	}
-
-	monthKey := adapter.GetActivityAccountMonthSurplusKey(activityAccount.ActivityID, activityAccount.UserID, month)
-	if err := d.redis.Set(&cache.Item{
-		Ctx:   ctx,
-		Key:   monthKey,
-		Value: activityAccount.MonthCountSurplus,
-		TTL:   time.Hour,
-	}); err != nil {
-		return err
-	}
-
-	dayKey := adapter.GetActivityAccountDaySurplusKey(activityAccount.ActivityID, activityAccount.UserID, day)
-	if err := d.redis.Set(&cache.Item{
-		Ctx:   ctx,
-		Key:   dayKey,
-		Value: activityAccount.DayCountSurplus,
-		TTL:   time.Hour,
-	}); err != nil {
-		return err
-	}
-
-	return nil
+	return d.initializeActivityQuotaValues(
+		ctx,
+		activityAccount.UserID,
+		activityAccount.ActivityID,
+		currentTime,
+		activityAccount.TotalCountSurplus,
+		activityAccount.MonthCountSurplus,
+		activityAccount.DayCountSurplus,
+	)
 }

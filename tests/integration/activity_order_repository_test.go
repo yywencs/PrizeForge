@@ -10,9 +10,9 @@ import (
 	"time"
 
 	"prizeforge/internal/domain/activity"
+	"prizeforge/internal/infrastructure/adapter"
 	"prizeforge/internal/infrastructure/repository/activityrepo"
 	"prizeforge/internal/infrastructure/repository/po"
-	"prizeforge/pkg/cache"
 	"prizeforge/pkg/xrand"
 
 	"gorm.io/gorm"
@@ -50,6 +50,13 @@ func newActivityOrderFixture(t *testing.T, totalSurplus, daySurplus, monthSurplu
 		daySurplus:   daySurplus,
 		monthSurplus: monthSurplus,
 	}
+	trackIntegrationRedisKeys(t,
+		adapter.GetActivityAccountKey(integrationOrderActivityID, userID),
+		adapter.GetActivityAccountTotalSurplusKey(integrationOrderActivityID, userID),
+		adapter.GetActivityAccountMonthSurplusKey(integrationOrderActivityID, userID, fixture.orderTime.Format("2006-01")),
+		adapter.GetActivityAccountDaySurplusKey(integrationOrderActivityID, userID, fixture.orderTime.Format("2006-01-02")),
+		adapter.GetPendingRaffleOrderKey(integrationOrderActivityID, userID),
+	)
 	t.Cleanup(func() {
 		deleteIntegrationRows(t, db, fixture.orderTable, "user_id", userID)
 		deleteIntegrationRows(t, db, "raffle_activity_account_day", "user_id", userID)
@@ -77,10 +84,7 @@ func newActivityOrderFixture(t *testing.T, totalSurplus, daySurplus, monthSurplu
 }
 
 func (f *activityOrderFixture) repository() activity.Repo {
-	localCache := cache.New(&cache.Options{
-		LocalCache: cache.NewTinyLFU(64, time.Minute),
-	})
-	return activityrepo.NewRepository(integrationDBRouter, integrationDefaultDB, localCache, nil, nil, nil)
+	return activityrepo.NewRepository(integrationDBRouter, integrationDefaultDB, integrationRedis, nil, nil, nil)
 }
 
 func (f *activityOrderFixture) order(orderID, requestID string) *activity.UserRaffleOrder {
@@ -97,8 +101,8 @@ func (f *activityOrderFixture) order(orderID, requestID string) *activity.UserRa
 	}
 }
 
-// TestActivityRepositoryCreatesOrderAndReusesRequest 验证首次请求会原子创建订单并扣减
-// 总、月、日额度，而相同 request_id 重试会复用原订单且不再次扣减额度。
+// TestActivityRepositoryCreatesOrderAndReusesRequest 验证首次请求通过 Redis Lua 原子预占
+// 总、月、日额度，相同 request_id 复用订单且不重复扣减，随后数据库额度可幂等同步。
 func TestActivityRepositoryCreatesOrderAndReusesRequest(t *testing.T) {
 	fixture := newActivityOrderFixture(t, 3, 3, 3)
 	repository := fixture.repository()
@@ -133,8 +137,48 @@ func TestActivityRepositoryCreatesOrderAndReusesRequest(t *testing.T) {
 	}
 
 	assertActivityOrderCount(t, fixture, 1)
-	assertActivityAccountState(t, fixture, 2, 2, 2, firstOrderID)
+	assertActivityOrderSyncState(t, fixture, firstOrderID, activity.AccountSyncStateCreate)
+	assertActivityAccountState(t, fixture, 3, 3, 3, "")
+	assertActivityPeriodRowCount(t, fixture, 0, 0)
+	assertActivityRedisQuota(t, fixture, 2, 2, 2)
+	assertActivityRedisQuotaPersistent(t, fixture)
+
+	aggregate := &activity.CreatePartakeOrder{
+		UserID:          fixture.userID,
+		ActivityID:      integrationOrderActivityID,
+		UserRaffleOrder: first,
+	}
+	if err := repository.SaveCreatePartakeOrderAggregate(context.Background(), aggregate); err != nil {
+		t.Fatalf("first SaveCreatePartakeOrderAggregate() error = %v, want nil", err)
+	}
+	if err := repository.SaveCreatePartakeOrderAggregate(context.Background(), aggregate); err != nil {
+		t.Fatalf("duplicate SaveCreatePartakeOrderAggregate() error = %v, want nil", err)
+	}
+	assertActivityOrderSyncState(t, fixture, firstOrderID, activity.AccountSyncStateCompleted)
+	assertActivityAccountState(t, fixture, 2, 2, 2, "")
 	assertActivityPeriodQuota(t, fixture, 2, 2)
+}
+
+// TestActivityRepositoryRejectsPartiallyInitializedQuotaCache 验证 Redis 三类额度只存在
+// 一部分时会关闭入口且不覆盖旧值，避免使用滞后的 MySQL 快照重置已经发生的预占。
+func TestActivityRepositoryRejectsPartiallyInitializedQuotaCache(t *testing.T) {
+	fixture := newActivityOrderFixture(t, 3, 3, 3)
+	totalKey := adapter.GetActivityAccountTotalSurplusKey(integrationOrderActivityID, fixture.userID)
+	if err := integrationRedisClient.Set(context.Background(), totalKey, 2, 0).Err(); err != nil {
+		t.Fatalf("prepare partial activity quota cache: %v", err)
+	}
+
+	_, _, err := fixture.repository().CreateOrLoadUserRaffleOrder(
+		context.Background(),
+		fixture.order(xrand.RandomNumeric(12), "request-"+xrand.RandomNumeric(12)),
+	)
+	if err == nil {
+		t.Fatal("CreateOrLoadUserRaffleOrder() error = nil, want partial cache error")
+	}
+
+	assertActivityOrderCount(t, fixture, 0)
+	assertActivityAccountState(t, fixture, 3, 3, 3, "")
+	assertIntegrationRedisInt(t, totalKey, 2)
 }
 
 // TestActivityRepositoryRejectsNewRequestWhileOrderPending 验证已有 created 订单时，新的
@@ -157,8 +201,9 @@ func TestActivityRepositoryRejectsNewRequestWhileOrderPending(t *testing.T) {
 	}
 
 	assertActivityOrderCount(t, fixture, 1)
-	assertActivityAccountState(t, fixture, 2, 2, 2, firstOrderID)
-	assertActivityPeriodQuota(t, fixture, 2, 2)
+	assertActivityAccountState(t, fixture, 3, 3, 3, "")
+	assertActivityPeriodRowCount(t, fixture, 0, 0)
+	assertActivityRedisQuota(t, fixture, 2, 2, 2)
 }
 
 // TestActivityRepositoryRollsBackWhenQuotaInsufficient 验证总、月或日额度不足时不会创建
@@ -277,8 +322,9 @@ func TestActivityRepositoryCreatesOneOrderForConcurrentRetries(t *testing.T) {
 	}
 
 	assertActivityOrderCount(t, fixture, 1)
-	assertActivityAccountState(t, fixture, 4, 4, 4, canonicalOrderID)
-	assertActivityPeriodQuota(t, fixture, 4, 4)
+	assertActivityAccountState(t, fixture, 5, 5, 5, "")
+	assertActivityPeriodRowCount(t, fixture, 0, 0)
+	assertActivityRedisQuota(t, fixture, 4, 4, 4)
 }
 
 func prepareExhaustedActivityDay(t *testing.T, fixture *activityOrderFixture) {
@@ -306,6 +352,33 @@ func assertActivityOrderCount(t *testing.T, fixture *activityOrderFixture, wantC
 	if count != wantCount {
 		t.Fatalf("activity order count = %d, want %d", count, wantCount)
 	}
+}
+
+func assertActivityOrderSyncState(t *testing.T, fixture *activityOrderFixture, orderID string, want activity.AccountSyncState) {
+	t.Helper()
+	var order po.UserRaffleOrder
+	if err := fixture.db.Table(fixture.orderTable).
+		Where("user_id = ? AND order_id = ?", fixture.userID, orderID).
+		First(&order).Error; err != nil {
+		t.Fatalf("query activity order sync state: %v", err)
+	}
+	if order.AccountSyncState != string(want) {
+		t.Fatalf("activity order account sync state = %q, want %q", order.AccountSyncState, want)
+	}
+}
+
+func assertActivityRedisQuota(t *testing.T, fixture *activityOrderFixture, wantTotal, wantDay, wantMonth int64) {
+	t.Helper()
+	assertIntegrationRedisInt(t, adapter.GetActivityAccountTotalSurplusKey(integrationOrderActivityID, fixture.userID), wantTotal)
+	assertIntegrationRedisInt(t, adapter.GetActivityAccountDaySurplusKey(integrationOrderActivityID, fixture.userID, fixture.orderTime.Format("2006-01-02")), wantDay)
+	assertIntegrationRedisInt(t, adapter.GetActivityAccountMonthSurplusKey(integrationOrderActivityID, fixture.userID, fixture.orderTime.Format("2006-01")), wantMonth)
+}
+
+func assertActivityRedisQuotaPersistent(t *testing.T, fixture *activityOrderFixture) {
+	t.Helper()
+	assertIntegrationRedisKeyPersistent(t, adapter.GetActivityAccountTotalSurplusKey(integrationOrderActivityID, fixture.userID))
+	assertIntegrationRedisKeyPersistent(t, adapter.GetActivityAccountDaySurplusKey(integrationOrderActivityID, fixture.userID, fixture.orderTime.Format("2006-01-02")))
+	assertIntegrationRedisKeyPersistent(t, adapter.GetActivityAccountMonthSurplusKey(integrationOrderActivityID, fixture.userID, fixture.orderTime.Format("2006-01")))
 }
 
 func assertActivityAccountState(

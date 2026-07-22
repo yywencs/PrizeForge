@@ -28,7 +28,7 @@ type Repo interface {
 	QueryRaffleActivity(ctx context.Context, activityID int64) (*Activity, error)
 	// 查询用户未使用的抽奖订单
 	QueryNoUsedRaffleOrder(ctx context.Context, userID string, activityID int64) (*UserRaffleOrder, error)
-	// CreateOrLoadUserRaffleOrder 在同一事务内恢复未完成订单，或扣减数据库额度并创建新订单。
+	// CreateOrLoadUserRaffleOrder 使用 Redis 原子预占额度，并创建或复用轻量抽奖订单。
 	CreateOrLoadUserRaffleOrder(ctx context.Context, order *UserRaffleOrder) (*UserRaffleOrder, bool, error)
 	// TryClaimUserRaffleOrder 原子抢占订单执行权；超时的 processing 订单允许被接管。
 	TryClaimUserRaffleOrder(ctx context.Context, userID string, orderID string) (*DrawClaim, error)

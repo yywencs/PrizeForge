@@ -75,7 +75,8 @@ func NewActivityUsecase(
 // Draw 执行完整抽奖链路：创建订单 → 执行抽奖 → 保存中奖记录。
 //
 // 幂等边界：
-//   - requestID 唯一映射到数据库抽奖订单，第一次事务同步扣额度并创建订单；
+//   - requestID 在 Redis Lua 中原子预占总/月/日额度，并唯一映射到数据库抽奖订单；
+//   - 数据库额度通过可靠消息异步同步，重复消息由订单 account_sync_state 幂等拦截；
 //   - draw_state 条件更新保证同一订单只有一个执行者；
 //   - 奖品库存以 userID+orderID 预占；
 //   - 第二次事务同步保存标准中奖结果、发奖 task、库存同步 task 和订单成功状态。

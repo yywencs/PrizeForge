@@ -113,6 +113,8 @@ type UserRaffleOrder struct {
 	ProcessingAt *time.Time
 	// DrawOwner 当前执行者令牌；超时接管后用于阻止旧执行者提交结果。
 	DrawOwner string
+	// AccountSyncState 表示 Redis 已预占的额度是否已经同步到 MySQL。
+	AccountSyncState AccountSyncState
 }
 
 type ActivitySku struct {
