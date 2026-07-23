@@ -36,10 +36,10 @@ func (c *BaseActionChain) Action(ctx context.Context, activitySku *ActivitySku, 
 }
 
 type Factory struct {
-	repo Repo
+	repo SkuStockActionRepository
 }
 
-func NewFactory(repo Repo) *Factory {
+func NewFactory(repo SkuStockActionRepository) *Factory {
 	return &Factory{
 		repo: repo,
 	}
@@ -71,11 +71,11 @@ func (c *BaseChain) next() ActionChain {
 }
 
 type SkuStockActionChain struct {
-	repo Repo
+	repo SkuStockActionRepository
 	BaseChain
 }
 
-func newSkuStockActionChain(repo Repo) ActionChain {
+func newSkuStockActionChain(repo SkuStockActionRepository) ActionChain {
 	return &SkuStockActionChain{
 		repo: repo,
 	}

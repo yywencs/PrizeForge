@@ -9,10 +9,10 @@ import (
 )
 
 type ActivityQuotaUsecase struct {
-	repo Repo
+	repo QuotaRepository
 }
 
-func NewActivityQuotaUsecase(repo Repo) *ActivityQuotaUsecase {
+func NewActivityQuotaUsecase(repo QuotaRepository) *ActivityQuotaUsecase {
 	return &ActivityQuotaUsecase{
 		repo: repo,
 	}

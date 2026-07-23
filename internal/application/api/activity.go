@@ -2,8 +2,9 @@ package api
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"prizeforge/internal/domain/activity"
-	"prizeforge/internal/domain/award"
 	"prizeforge/internal/domain/rebate"
 	"prizeforge/internal/domain/strategy"
 	"prizeforge/pkg/logger"
@@ -13,8 +14,9 @@ import (
 // activityPartakeService 定义活动应用层创建和抢占抽奖订单所需的最小能力。
 type activityPartakeService interface {
 	CreateOrder(context.Context, *activity.PartakeRaffleActivity) (*activity.CreatePartakeOrder, error)
-	TryClaimDraw(context.Context, string, string) (*activity.DrawClaim, error)
-	ReleaseDrawClaim(context.Context, string, string, string) error
+	TryClaimDraw(context.Context, string, int64, string, string) (*activity.DrawClaim, error)
+	ReleaseDrawClaim(context.Context, string, int64, string, string) error
+	CompleteDraw(context.Context, *activity.DrawResult, string) (*activity.DrawResultPublication, error)
 }
 
 // activityQuotaService 定义活动应用层查询和预热用户额度所需的最小能力。
@@ -29,10 +31,9 @@ type raffleStrategyService interface {
 	QueryStrategyAward(context.Context, int64, int64) (*strategy.StrategyAward, error)
 }
 
-// userAwardService 定义活动抽奖编排保存和查询中奖记录所需的能力。
-type userAwardService interface {
-	SaveUserAwardRecord(context.Context, *award.UserAwardRecord) (*award.UserAwardRecord, error)
-	QueryByOrderID(context.Context, string, string) (*award.UserAwardRecord, error)
+// drawResultPublisher 将 Redis Stream 结果可靠投递到 RabbitMQ，并等待 Broker Confirm。
+type drawResultPublisher interface {
+	Publish(context.Context, *activity.DrawResultPublication) error
 }
 
 // behaviorRebateService 定义活动应用层签到返利所需的最小能力。
@@ -47,7 +48,7 @@ type ActivityUsecase struct {
 	quotaSvc    activityQuotaService
 	stockMgr    *activity.StockManager
 	strategySvc raffleStrategyService
-	awardSvc    userAwardService
+	resultPub   drawResultPublisher
 	rebateSvc   behaviorRebateService
 	now         func() time.Time
 }
@@ -58,7 +59,7 @@ func NewActivityUsecase(
 	quotaSvc activityQuotaService,
 	stockMgr *activity.StockManager,
 	strategySvc raffleStrategyService,
-	awardSvc userAwardService,
+	resultPub drawResultPublisher,
 	rebateSvc behaviorRebateService,
 ) *ActivityUsecase {
 	return &ActivityUsecase{
@@ -66,20 +67,20 @@ func NewActivityUsecase(
 		quotaSvc:    quotaSvc,
 		stockMgr:    stockMgr,
 		strategySvc: strategySvc,
-		awardSvc:    awardSvc,
+		resultPub:   resultPub,
 		rebateSvc:   rebateSvc,
 		now:         time.Now,
 	}
 }
 
-// Draw 执行完整抽奖链路：创建订单 → 执行抽奖 → 保存中奖记录。
+// Draw 执行 Redis-first 抽奖链路：额度/订单预占 → 抽奖/库存预占 → 结果入 Stream
+// → RabbitMQ Confirm。MySQL 订单、额度、中奖记录与发奖 Outbox 由结果消费者异步落库。
 //
 // 幂等边界：
-//   - requestID 在 Redis Lua 中原子预占总/月/日额度，并唯一映射到数据库抽奖订单；
-//   - 数据库额度通过可靠消息异步同步，重复消息由订单 account_sync_state 幂等拦截；
-//   - draw_state 条件更新保证同一订单只有一个执行者；
+//   - requestID 在 Redis Lua 中原子预占总/月/日额度，并唯一映射到 Redis 临时订单；
+//   - Redis draw_state/owner 条件更新保证同一订单只有一个执行者；
 //   - 奖品库存以 userID+orderID 预占；
-//   - 第二次事务同步保存标准中奖结果、发奖 task、库存同步 task 和订单成功状态。
+//   - 标准结果与 Redis Stream 事件原子保存，Confirm 前不向用户返回成功。
 func (u *ActivityUsecase) Draw(ctx context.Context, userID string, activityID int64, requestID string) (awardID int64, awardTitle string, awardIndex int, err error) {
 	// 1. 创建或复用抽奖订单
 	aggregate, err := u.partakeSvc.CreateOrder(ctx, &activity.PartakeRaffleActivity{
@@ -92,20 +93,22 @@ func (u *ActivityUsecase) Draw(ctx context.Context, userID string, activityID in
 	}
 	userRaffleOrder := aggregate.UserRaffleOrder
 
-	// 幂等预查：仅在复用老订单时，查这笔订单是否已抽过并落库
-	if aggregate.Reused {
-		existing, qerr := u.awardSvc.QueryByOrderID(ctx, userID, userRaffleOrder.OrderID)
-		if qerr != nil {
-			// 查询失败必须 fail closed；继续重抽会重复扣减奖品库存。
-			return 0, "", 0, qerr
-		} else if existing != nil {
-			logger.Info("draw reuse existing award record", "userID", userID, "activityID", activityID, "orderID", userRaffleOrder.OrderID, "awardID", existing.AwardID)
-			return u.buildAwardResult(ctx, userRaffleOrder.StrategyID, existing)
+	if aggregate.DrawResultPublication != nil {
+		publication := aggregate.DrawResultPublication
+		if publication.Result == nil {
+			return 0, "", 0, activity.ErrRecordNotFound
 		}
+		if !publication.BrokerConfirmed {
+			if err := u.publishResult(ctx, publication); err != nil {
+				return 0, "", 0, err
+			}
+		}
+		logger.Info("draw reuse Redis result", "userID", userID, "activityID", activityID, "orderID", userRaffleOrder.OrderID, "awardID", publication.Result.AwardID)
+		return u.buildAwardResult(ctx, publication.Result)
 	}
 
 	// 2. 原子抢占订单执行权。同一订单同时只允许一个请求进入抽奖策略。
-	claim, err := u.partakeSvc.TryClaimDraw(ctx, userID, userRaffleOrder.OrderID)
+	claim, err := u.partakeSvc.TryClaimDraw(ctx, userID, activityID, requestID, userRaffleOrder.OrderID)
 	if err != nil {
 		return 0, "", 0, err
 	}
@@ -114,14 +117,15 @@ func (u *ActivityUsecase) Draw(ctx context.Context, userID string, activityID in
 	}
 	switch claim.Status {
 	case activity.DrawClaimCompleted:
-		existing, queryErr := u.awardSvc.QueryByOrderID(ctx, userID, userRaffleOrder.OrderID)
-		if queryErr != nil {
-			return 0, "", 0, queryErr
-		}
-		if existing == nil {
+		if claim.Publication == nil || claim.Publication.Result == nil {
 			return 0, "", 0, activity.ErrRecordNotFound
 		}
-		return u.buildAwardResult(ctx, userRaffleOrder.StrategyID, existing)
+		if !claim.Publication.BrokerConfirmed {
+			if err := u.publishResult(ctx, claim.Publication); err != nil {
+				return 0, "", 0, err
+			}
+		}
+		return u.buildAwardResult(ctx, claim.Publication.Result)
 	case activity.DrawClaimProcessing:
 		// 并发请求不允许重抽；客户端可携带同一 request_id 重试。
 		return 0, "", 0, activity.ErrDrawInProgress
@@ -136,7 +140,7 @@ func (u *ActivityUsecase) Draw(ctx context.Context, userID string, activityID in
 	releaseClaim := func() {
 		releaseCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
 		defer cancel()
-		if releaseErr := u.partakeSvc.ReleaseDrawClaim(releaseCtx, userID, userRaffleOrder.OrderID, claim.Owner); releaseErr != nil {
+		if releaseErr := u.partakeSvc.ReleaseDrawClaim(releaseCtx, userID, activityID, userRaffleOrder.OrderID, claim.Owner); releaseErr != nil {
 			logger.Warn("release draw claim failed", "orderID", userRaffleOrder.OrderID, "err", releaseErr)
 		}
 	}
@@ -153,40 +157,56 @@ func (u *ActivityUsecase) Draw(ctx context.Context, userID string, activityID in
 		return 0, "", 0, err
 	}
 
-	// 4. 第二次同步事务：保存标准中奖结果、发奖 task，并将订单更新为 success。
-	savedRecord, err := u.awardSvc.SaveUserAwardRecord(ctx, &award.UserAwardRecord{
+	// 4. 原子保存标准结果并写入 Redis Stream。
+	result := &activity.DrawResult{
 		UserID:        userID,
 		ActivityID:    activityID,
+		ActivityName:  userRaffleOrder.ActivityName,
 		StrategyID:    userRaffleOrder.StrategyID,
 		OrderID:       userRaffleOrder.OrderID,
+		RequestID:     requestID,
+		OrderTime:     userRaffleOrder.OrderTime,
 		AwardID:       int(raffleAward.AwardID),
 		AwardTitle:    raffleAward.AwardTitle,
 		AwardTime:     u.now(),
-		AwardState:    award.AwardStateCreate,
 		StockReserved: raffleAward.StockReserved,
-		DrawOwner:     claim.Owner,
-	})
+	}
+	publication, err := u.partakeSvc.CompleteDraw(ctx, result, claim.Owner)
 	if err != nil {
 		releaseClaim()
 		return 0, "", 0, err
 	}
 
-	return u.buildAwardResult(ctx, userRaffleOrder.StrategyID, savedRecord)
+	// 5. 等待 RabbitMQ Publisher Confirm；失败时结果仍留在 Stream，由重试/后台补偿发布。
+	if err := u.publishResult(ctx, publication); err != nil {
+		return 0, "", 0, err
+	}
+	return u.buildAwardResult(ctx, publication.Result)
 }
 
-func (u *ActivityUsecase) buildAwardResult(ctx context.Context, strategyID int64, record *award.UserAwardRecord) (int64, string, int, error) {
-	if record == nil {
+func (u *ActivityUsecase) publishResult(ctx context.Context, publication *activity.DrawResultPublication) error {
+	if u.resultPub == nil {
+		return errors.New("draw result publisher is not configured")
+	}
+	if err := u.resultPub.Publish(ctx, publication); err != nil {
+		return fmt.Errorf("%w: publish draw result: %w", activity.ErrDrawInProgress, err)
+	}
+	return nil
+}
+
+func (u *ActivityUsecase) buildAwardResult(ctx context.Context, result *activity.DrawResult) (int64, string, int, error) {
+	if result == nil {
 		return 0, "", 0, activity.ErrRecordNotFound
 	}
 	awardSort := 0
-	strategyAward, err := u.strategySvc.QueryStrategyAward(ctx, strategyID, int64(record.AwardID))
+	strategyAward, err := u.strategySvc.QueryStrategyAward(ctx, result.StrategyID, int64(result.AwardID))
 	if err != nil {
 		return 0, "", 0, err
 	}
 	if strategyAward != nil {
 		awardSort = strategyAward.Sort
 	}
-	return int64(record.AwardID), record.AwardTitle, awardSort, nil
+	return int64(result.AwardID), result.AwardTitle, awardSort, nil
 }
 
 // CalendarSignRebate 执行签到返利。

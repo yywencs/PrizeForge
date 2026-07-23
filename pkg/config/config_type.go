@@ -88,7 +88,6 @@ type RabbitMQTopicConfig struct {
 	ActivitySkuStockZero string `mapstructure:"activity_sku_stock_zero"`
 	SendAward            string `mapstructure:"send_award"`
 	SendRebate           string `mapstructure:"send_rebate"`
-	SaveOrderRecord      string `mapstructure:"save_order_record"`
 }
 
 // --- Asynq 部分 ---

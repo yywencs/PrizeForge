@@ -31,6 +31,7 @@ func NewAsynqWorker(
 	skuStockJob *job.ActivitySkuStockConsumeJob,
 	stateSyncJob *job.SendAwardMessage,
 	strategyAwardStockJob *job.StrategyAwardStockConsumeJob,
+	drawResultRecoveryJob *job.DrawResultRecoveryJob,
 ) *AsynqWorker {
 	redisOpt := asynq.RedisClientOpt{
 		Addr:     fmt.Sprintf("%s:%d", cfg.Redis.Host, cfg.Redis.Port),
@@ -68,10 +69,14 @@ func NewAsynqWorker(
 	mux.HandleFunc(activity.TaskTypeActivitySkuStockConsume, wrapAsynqHandler(activity.TaskTypeActivitySkuStockConsume, skuStockJob.ProcessTask))
 	mux.HandleFunc(activity.TaskTypeActivityStateSync, wrapAsynqHandler(activity.TaskTypeActivityStateSync, stateSyncJob.ProcessTask))
 	mux.HandleFunc(task.TaskTypeStrategyAwardStockConsume, wrapAsynqHandler(task.TaskTypeStrategyAwardStockConsume, strategyAwardStockJob.ProcessTask))
+	mux.HandleFunc(activity.TaskTypeDrawResultPublish, wrapAsynqHandler(activity.TaskTypeDrawResultPublish, drawResultRecoveryJob.ProcessTask))
 
 	// 注册定时任务：每 5 秒扫描 task 表并投递消息
 	if _, err := scheduler.Register("@every 5s", asynq.NewTask(activity.TaskTypeActivityStateSync, nil)); err != nil {
 		logger.Error("register scheduler failed", "err", err)
+	}
+	if _, err := scheduler.Register("@every 1s", asynq.NewTask(activity.TaskTypeDrawResultPublish, nil)); err != nil {
+		logger.Error("register draw result publisher scheduler failed", "err", err)
 	}
 
 	return &AsynqWorker{

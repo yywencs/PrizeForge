@@ -7,7 +7,6 @@ import (
 	"sort"
 	"sync"
 
-	"prizeforge/internal/domain/activity"
 	"prizeforge/internal/domain/award"
 	"prizeforge/internal/domain/strategy"
 	"prizeforge/internal/domain/task"
@@ -22,11 +21,6 @@ type outboxTaskService interface {
 	SendMessage(context.Context, *task.Task) error
 	UpdateTaskSendMessageCompletedBatch(context.Context, int, []uint64) error
 	UpdateTaskSendMessageFailBatch(context.Context, int, []uint64) error
-}
-
-// partakeOrderService 定义保存异步抽奖订单任务所需的能力。
-type partakeOrderService interface {
-	SaveOrderRecord(context.Context, *activity.CreatePartakeOrder) error
 }
 
 // awardStockService 定义同步策略奖品库存任务所需的能力。
@@ -72,14 +66,12 @@ type taskStateBatch struct {
 //  1. 遍历所有分库，查询状态为 create 的 task 记录
 //  2. 对每条 task 按 topic 分发：
 //     - send_award → 通过 TaskUsecase.SendMessage 投递到 RabbitMQ
-//     - save_order_record → 调用 ActivityPartakeUsecase.SaveOrderRecord 持久化订单
-//  3. 分发成功后标记 task 为 completed，失败则标记为 fail
+//  3. 分发成功后标记 task 为 completed，失败则标记为 fail。
 //
 // 注意：类型名 SendAwardMessage 是历史遗留，实际职责是"扫描并分发 task 表消息"，
 // 不限于发奖。考虑到引用点较多暂不改名。
 type SendAwardMessage struct {
 	taskSvc     outboxTaskService
-	partakeSvc  partakeOrderService
 	strategySvc awardStockService
 	dbCount     int // 分库数量，决定需要扫描多少个数据库
 	scanMu      sync.Mutex
@@ -90,7 +82,6 @@ type SendAwardMessage struct {
 // dbCount 为分库数量，<= 0 时默认为 1。
 func NewSendAwardMessage(
 	taskSvc outboxTaskService,
-	partakeSvc partakeOrderService,
 	strategySvc awardStockService,
 	dbCount int,
 ) *SendAwardMessage {
@@ -99,7 +90,6 @@ func NewSendAwardMessage(
 	}
 	return &SendAwardMessage{
 		taskSvc:     taskSvc,
-		partakeSvc:  partakeSvc,
 		strategySvc: strategySvc,
 		dbCount:     dbCount,
 	}
@@ -252,18 +242,10 @@ func (j *SendAwardMessage) persistTaskResults(ctx context.Context, results <-cha
 //
 // Topic 路由表：
 //   - send_award       → 投递到 RabbitMQ（TaskUsecase.SendMessage）
-//   - save_order_record → 调用领域服务持久化订单（ActivityPartakeUsecase.SaveOrderRecord）
 func (j *SendAwardMessage) routeTaskByTopic(ctx context.Context, t *task.Task) error {
 	switch t.Topic {
 	case award.SendAwardTopic:
 		return j.taskSvc.SendMessage(ctx, t)
-
-	case activity.SaveOrderRecordTopic:
-		var message activity.SaveOrderTaskMessage
-		if err := json.Unmarshal([]byte(t.Message), &message); err != nil {
-			return fmt.Errorf("解析 SaveOrderTaskMessage 失败: %w", err)
-		}
-		return j.partakeSvc.SaveOrderRecord(ctx, message.ToCreatePartakeOrder())
 
 	case strategy.AwardStockSyncTopic:
 		message, err := decodeStockSyncMessage(t)

@@ -23,14 +23,20 @@ type Repository struct {
 	inspector          *asynq.Inspector
 }
 
-// activityEventPublisher 定义活动仓储发布库存耗尽和异步订单事件所需的最小能力。
+var (
+	_ activity.QuotaRepository          = (*Repository)(nil)
+	_ activity.StockRepository          = (*Repository)(nil)
+	_ activity.SkuStockActionRepository = (*Repository)(nil)
+	_ activity.PartakeRepository        = (*Repository)(nil)
+)
+
+// activityEventPublisher 定义活动仓储发布库存耗尽事件所需的最小能力。
 type activityEventPublisher interface {
 	PublishStockZero(context.Context, *rabbitmq.BaseEvent) error
-	PublishSaveOrder(context.Context, *rabbitmq.BaseEvent) error
 }
 
-// NewRepository 构造活动仓储实现
-func NewRepository(routerDB *adapter.DBRouter, db *gorm.DB, redis *cache.Cache, stockZeroPublisher activityEventPublisher, queue *asynq.Client, inspector *asynq.Inspector) activity.Repo {
+// NewRepository 构造活动仓储实现。返回具体类型，由不同用例按需接收窄接口。
+func NewRepository(routerDB *adapter.DBRouter, db *gorm.DB, redis *cache.Cache, stockZeroPublisher activityEventPublisher, queue *asynq.Client, inspector *asynq.Inspector) *Repository {
 	return &Repository{
 		routerDB:           routerDB,
 		db:                 db,

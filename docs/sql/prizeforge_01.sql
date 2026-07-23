@@ -217,7 +217,7 @@ CREATE TABLE `task` (
   PRIMARY KEY (`id`),
   UNIQUE KEY `uq_message_id` (`message_id`),
   KEY `idx_state_update_id` (`state`,`update_time`,`id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='任务表，发送MQ';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='可靠任务表';
 
 # 转储表 user_award_record_000
 # ------------------------------------------------------------
@@ -341,7 +341,6 @@ CREATE TABLE `user_raffle_order_000` (
   `draw_state` varchar(16) NOT NULL DEFAULT 'created' COMMENT '抽奖状态；created-待执行、processing-执行中、success-已完成、cancelled-已取消',
   `processing_at` datetime NULL COMMENT '抽奖执行权抢占时间',
   `draw_owner` varchar(32) NOT NULL DEFAULT '' COMMENT '当前抽奖执行者令牌',
-  `account_sync_state` varchar(16) NOT NULL DEFAULT 'completed' COMMENT '额度账同步状态',
   `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
   `update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
   PRIMARY KEY (`id`),
@@ -370,7 +369,6 @@ CREATE TABLE `user_raffle_order_001` (
   `draw_state` varchar(16) NOT NULL DEFAULT 'created' COMMENT '抽奖状态；created-待执行、processing-执行中、success-已完成、cancelled-已取消',
   `processing_at` datetime NULL COMMENT '抽奖执行权抢占时间',
   `draw_owner` varchar(32) NOT NULL DEFAULT '' COMMENT '当前抽奖执行者令牌',
-  `account_sync_state` varchar(16) NOT NULL DEFAULT 'completed' COMMENT '额度账同步状态',
   `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
   `update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
   PRIMARY KEY (`id`),
@@ -399,7 +397,6 @@ CREATE TABLE `user_raffle_order_002` (
   `draw_state` varchar(16) NOT NULL DEFAULT 'created' COMMENT '抽奖状态；created-待执行、processing-执行中、success-已完成、cancelled-已取消',
   `processing_at` datetime NULL COMMENT '抽奖执行权抢占时间',
   `draw_owner` varchar(32) NOT NULL DEFAULT '' COMMENT '当前抽奖执行者令牌',
-  `account_sync_state` varchar(16) NOT NULL DEFAULT 'completed' COMMENT '额度账同步状态',
   `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
   `update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
   PRIMARY KEY (`id`),
@@ -428,7 +425,6 @@ CREATE TABLE `user_raffle_order_003` (
   `draw_state` varchar(16) NOT NULL DEFAULT 'created' COMMENT '抽奖状态；created-待执行、processing-执行中、success-已完成、cancelled-已取消',
   `processing_at` datetime NULL COMMENT '抽奖执行权抢占时间',
   `draw_owner` varchar(32) NOT NULL DEFAULT '' COMMENT '当前抽奖执行者令牌',
-  `account_sync_state` varchar(16) NOT NULL DEFAULT 'completed' COMMENT '额度账同步状态',
   `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
   `update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
   PRIMARY KEY (`id`),

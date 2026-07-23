@@ -25,7 +25,8 @@ type queryAccountRequest struct {
 // ---- 处理器 ----
 
 // Draw 处理 POST /api/v1/raffle/activity/draw
-// 完整抽奖流程：创建订单 → 执行抽奖 → 保存中奖记录。
+// Redis-first 抽奖流程：预占额度和临时订单 → 抽奖 → 结果写入 Redis Stream
+// → RabbitMQ Publisher Confirm。MySQL 订单、额度、中奖记录及发奖 Outbox 由消费者事务落库。
 func (s *Server) Draw(c *gin.Context) {
 	var req drawRequest
 	if err := c.ShouldBindJSON(&req); err != nil {

@@ -8,7 +8,6 @@ import (
 	"sync"
 	"testing"
 
-	"prizeforge/internal/domain/activity"
 	"prizeforge/internal/domain/award"
 	"prizeforge/internal/domain/strategy"
 	"prizeforge/internal/domain/task"
@@ -49,17 +48,6 @@ func (f *fakeOutboxTaskService) UpdateTaskSendMessageFailBatch(ctx context.Conte
 	return f.updateTaskSendMessageFailBatchFn(ctx, dbIndex, taskIDs)
 }
 
-type fakePartakeOrderService struct {
-	saveOrderRecordFn func(context.Context, *activity.CreatePartakeOrder) error
-}
-
-func (f *fakePartakeOrderService) SaveOrderRecord(ctx context.Context, aggregate *activity.CreatePartakeOrder) error {
-	if f.saveOrderRecordFn == nil {
-		panic("unexpected SaveOrderRecord call")
-	}
-	return f.saveOrderRecordFn(ctx, aggregate)
-}
-
 type fakeAwardStockService struct {
 	updateStrategyAwardStockBatchFn func(context.Context, []strategy.AwardStockConsumeMessage) error
 }
@@ -81,7 +69,7 @@ func TestSendAwardMessageProcessTaskScansConfiguredDatabases(t *testing.T) {
 			return nil, nil
 		},
 	}
-	job := NewSendAwardMessage(taskSvc, nil, nil, 3)
+	job := NewSendAwardMessage(taskSvc, nil, 3)
 
 	err := job.ProcessTask(context.Background(), nil)
 
@@ -91,7 +79,7 @@ func TestSendAwardMessageProcessTaskScansConfiguredDatabases(t *testing.T) {
 	if !reflect.DeepEqual(scanned, []int{1, 2, 3}) {
 		t.Fatalf("ProcessTask() scanned databases = %#v, want %#v", scanned, []int{1, 2, 3})
 	}
-	defaultJob := NewSendAwardMessage(taskSvc, nil, nil, 0)
+	defaultJob := NewSendAwardMessage(taskSvc, nil, 0)
 	if defaultJob.dbCount != 1 {
 		t.Fatalf("NewSendAwardMessage() default dbCount = %d, want 1", defaultJob.dbCount)
 	}
@@ -111,7 +99,7 @@ func TestSendAwardMessageProcessTaskStopsOnQueryFailure(t *testing.T) {
 			return nil, nil
 		},
 	}
-	job := NewSendAwardMessage(taskSvc, nil, nil, 3)
+	job := NewSendAwardMessage(taskSvc, nil, 3)
 
 	err := job.ProcessTask(context.Background(), nil)
 
@@ -145,7 +133,7 @@ func TestSendAwardMessageProcessTaskDispatchesAndWaits(t *testing.T) {
 			return nil
 		},
 	}
-	job := NewSendAwardMessage(taskSvc, nil, nil, 1)
+	job := NewSendAwardMessage(taskSvc, nil, 1)
 
 	err := job.ProcessTask(context.Background(), nil)
 
@@ -204,7 +192,7 @@ func TestSendAwardMessageProcessTaskGroupsStockByAward(t *testing.T) {
 		},
 	}
 
-	job := NewSendAwardMessage(taskSvc, nil, strategySvc, 2)
+	job := NewSendAwardMessage(taskSvc, strategySvc, 2)
 	if err := job.ProcessTask(context.Background(), nil); err != nil {
 		t.Fatalf("ProcessTask() error = %v, want nil", err)
 	}
@@ -251,7 +239,7 @@ func TestSendAwardMessageProcessTaskFailsWholeStockGroup(t *testing.T) {
 		},
 	}
 
-	job := NewSendAwardMessage(taskSvc, nil, strategySvc, 1)
+	job := NewSendAwardMessage(taskSvc, strategySvc, 1)
 	if err := job.ProcessTask(context.Background(), nil); err != nil {
 		t.Fatalf("ProcessTask() error = %v, want nil", err)
 	}
@@ -297,7 +285,7 @@ func TestSendAwardMessageProcessTaskBatchesResultsByShard(t *testing.T) {
 		},
 	}
 
-	job := NewSendAwardMessage(taskSvc, nil, nil, 2)
+	job := NewSendAwardMessage(taskSvc, nil, 2)
 	if err := job.ProcessTask(context.Background(), nil); err != nil {
 		t.Fatalf("ProcessTask() error = %v, want nil", err)
 	}
@@ -336,7 +324,7 @@ func TestSendAwardMessageProcessTaskFallsBackToFailBatch(t *testing.T) {
 		},
 	}
 
-	job := NewSendAwardMessage(taskSvc, nil, nil, 1)
+	job := NewSendAwardMessage(taskSvc, nil, 1)
 	if err := job.ProcessTask(context.Background(), nil); err != nil {
 		t.Fatalf("ProcessTask() error = %v, want nil", err)
 	}
@@ -358,29 +346,9 @@ func TestSendAwardMessageRouteTaskByTopicDispatchesSupportedTopics(t *testing.T)
 				return nil
 			},
 		}
-		job := NewSendAwardMessage(taskSvc, nil, nil, 1)
+		job := NewSendAwardMessage(taskSvc, nil, 1)
 
 		if err := job.routeTaskByTopic(context.Background(), taskItem); err != nil {
-			t.Fatalf("routeTaskByTopic() error = %v, want nil", err)
-		}
-	})
-
-	t.Run("save order", func(t *testing.T) {
-		partakeSvc := &fakePartakeOrderService{
-			saveOrderRecordFn: func(_ context.Context, aggregate *activity.CreatePartakeOrder) error {
-				if aggregate.UserID != "user-1" || aggregate.UserRaffleOrder == nil || aggregate.UserRaffleOrder.OrderID != "order-1" {
-					t.Fatalf("SaveOrderRecord() aggregate = %#v, want user-1/order-1", aggregate)
-				}
-				return nil
-			},
-		}
-		job := NewSendAwardMessage(nil, partakeSvc, nil, 1)
-
-		err := job.routeTaskByTopic(context.Background(), &task.Task{
-			Topic:   activity.SaveOrderRecordTopic,
-			Message: `{"u":"user-1","o":"order-1"}`,
-		})
-		if err != nil {
 			t.Fatalf("routeTaskByTopic() error = %v, want nil", err)
 		}
 	})
@@ -398,7 +366,7 @@ func TestSendAwardMessageRouteTaskByTopicDispatchesSupportedTopics(t *testing.T)
 				return nil
 			},
 		}
-		job := NewSendAwardMessage(nil, nil, strategySvc, 1)
+		job := NewSendAwardMessage(nil, strategySvc, 1)
 
 		err := job.routeTaskByTopic(context.Background(), &task.Task{
 			Topic:   strategy.AwardStockSyncTopic,
@@ -417,11 +385,10 @@ func TestSendAwardMessageRouteTaskByTopicRejectsInvalidTasks(t *testing.T) {
 		name string
 		task *task.Task
 	}{
-		{name: "invalid save order payload", task: &task.Task{Topic: activity.SaveOrderRecordTopic, Message: "{"}},
 		{name: "invalid stock payload", task: &task.Task{Topic: strategy.AwardStockSyncTopic, Message: "{"}},
 		{name: "unsupported topic", task: &task.Task{Topic: "unknown"}},
 	}
-	job := NewSendAwardMessage(nil, &fakePartakeOrderService{}, &fakeAwardStockService{}, 1)
+	job := NewSendAwardMessage(nil, &fakeAwardStockService{}, 1)
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

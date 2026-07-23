@@ -90,61 +90,67 @@ func TestRabbitMQConsumerDispatchesStockZeroEventAndAcknowledges(t *testing.T) {
 	}
 }
 
-// TestRabbitMQConsumerSynchronizesReservedQuotaAndAcknowledges 验证 Redis Lua 预占额度后，
-// save_order_record 消息会通过真实 RabbitMQ 将数据库总、月、日额度各扣一次并标记同步完成。
-func TestRabbitMQConsumerSynchronizesReservedQuotaAndAcknowledges(t *testing.T) {
+// TestRabbitMQConsumerPersistsDrawResultAndAcknowledges 验证完整抽奖结果经过真实 RabbitMQ 后，
+// 会在一个事务内落订单、中奖记录、发奖 Outbox，并同步扣减数据库总、月、日额度。
+func TestRabbitMQConsumerPersistsDrawResultAndAcknowledges(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
 	fixture := newActivityOrderFixture(t, 3, 3, 3)
 	repository := fixture.repository()
-	order, reused, err := repository.CreateOrLoadUserRaffleOrder(
-		ctx,
-		fixture.order(xrand.RandomNumeric(12), "request-"+xrand.RandomNumeric(12)),
-	)
-	if err != nil {
-		t.Fatalf("reserve activity quota and create order: %v", err)
-	}
-	if reused {
-		t.Fatal("first activity order reused = true, want false")
-	}
+	order := fixture.order(xrand.RandomNumeric(12), "request-"+xrand.RandomNumeric(12))
+	result := fixture.drawResult(order)
 
-	topic := activity.SaveOrderRecordTopic
+	topic := activity.DrawResultTopic
 	trackIntegrationRabbitMQTopology(t, topic)
 	connection, err := adapter.NewConnection(integrationRabbitMQConfig)
 	if err != nil {
-		t.Fatalf("connect RabbitMQ quota synchronization test: %v", err)
+		t.Fatalf("connect RabbitMQ draw-result test: %v", err)
 	}
 	consumer := listener.NewRabbitMQConsumer(connection, nil, nil, nil)
 	t.Cleanup(consumer.Shutdown)
 	partakeUsecase := activity.NewActivityPartakeUsecase(repository)
-	recordingListener := newIntegrationRecordingListener(listener.NewSaveOrderListener(partakeUsecase), 1)
+	recordingListener := newIntegrationRecordingListener(listener.NewDrawResultListener(partakeUsecase), 1)
 	consumer.RegisterListener(topic, recordingListener)
 	if err := consumer.Start(ctx); err != nil {
-		t.Fatalf("start quota synchronization consumer: %v", err)
+		t.Fatalf("start draw-result consumer: %v", err)
 	}
 
 	rabbitPublisher, err := adapter.NewRabbitMQPublisher(connection)
 	if err != nil {
-		t.Fatalf("create quota synchronization publisher: %v", err)
+		t.Fatalf("create draw-result publisher: %v", err)
 	}
 	publisher := adapter.NewPublisher(rabbitPublisher, integrationRabbitMQConfig)
-	event := rabbitmq.NewBaseEvent(&activity.CreatePartakeOrder{
-		UserID:          fixture.userID,
-		ActivityID:      integrationOrderActivityID,
-		UserRaffleOrder: order,
-	})
-	if err := publisher.PublishSaveOrder(ctx, event); err != nil {
-		t.Fatalf("publish quota synchronization event: %v", err)
+	event := &rabbitmq.BaseEvent{
+		ID:        "draw:" + result.UserID + ":" + result.OrderID,
+		Timestamp: result.AwardTime,
+		Data:      result,
+	}
+	if err := publisher.PublishDrawResult(ctx, event); err != nil {
+		t.Fatalf("publish draw-result event: %v", err)
 	}
 	call := waitIntegrationListenerCall(t, ctx, recordingListener.calls)
 	if call.retry || call.err != nil {
-		t.Fatalf("quota synchronization listener = retry:%t err:%v, want success", call.retry, call.err)
+		t.Fatalf("draw-result listener = retry:%t err:%v, want success", call.retry, call.err)
 	}
 
-	assertActivityOrderSyncState(t, fixture, order.OrderID, activity.AccountSyncStateCompleted)
-	assertActivityAccountState(t, fixture, 2, 2, 2, "")
+	assertActivityOrderCount(t, fixture, 1)
+	assertActivityAccountState(t, fixture, 2, 3, 3, "")
 	assertActivityPeriodQuota(t, fixture, 2, 2)
+	var awardCount, outboxCount int64
+	if err := fixture.db.Table(fixture.awardTable).
+		Where("user_id = ? AND order_id = ?", fixture.userID, order.OrderID).
+		Count(&awardCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := fixture.db.Table("task").
+		Where("user_id = ?", fixture.userID).
+		Count(&outboxCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if awardCount != 1 || outboxCount != 2 {
+		t.Fatalf("persisted counts award=%d outbox=%d, want 1/2", awardCount, outboxCount)
+	}
 }
 
 // TestRabbitMQConsumerRequeuesRetryableFailure 验证 Listener 报告临时错误时，Consumer 会

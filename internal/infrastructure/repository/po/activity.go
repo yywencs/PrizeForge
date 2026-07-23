@@ -123,21 +123,20 @@ func (RaffleActivityAccountMonth) TableName() string {
 }
 
 type UserRaffleOrder struct {
-	ID               uint64     `gorm:"column:id;primaryKey;autoIncrement;comment:自增ID"`
-	UserID           string     `gorm:"column:user_id;type:varchar(32);not null;comment:用户ID"`
-	ActivityID       int64      `gorm:"column:activity_id;not null;comment:活动ID"`
-	ActivityName     string     `gorm:"column:activity_name;type:varchar(64);not null;comment:活动名称"`
-	StrategyID       int64      `gorm:"column:strategy_id;not null;comment:抽奖策略ID"`
-	OrderID          string     `gorm:"column:order_id;type:varchar(12);not null;comment:订单ID"`
-	RequestID        string     `gorm:"column:request_id;type:varchar(64);not null;comment:客户端请求幂等ID"`
-	OrderTime        time.Time  `gorm:"column:order_time;type:datetime;not null;comment:下单时间"`
-	OrderState       string     `gorm:"column:order_state;type:varchar(16);not null;default:create;comment:订单状态；create-创建、used-已使用、cancel-已作废"`
-	DrawState        string     `gorm:"column:draw_state;type:varchar(16);not null;default:created;comment:抽奖状态；created-待执行、processing-执行中、success-已完成、cancelled-已取消"`
-	ProcessingAt     *time.Time `gorm:"column:processing_at;type:datetime;comment:抽奖执行权抢占时间"`
-	DrawOwner        string     `gorm:"column:draw_owner;type:varchar(32);not null;default:'';comment:当前抽奖执行者令牌"`
-	AccountSyncState string     `gorm:"column:account_sync_state;type:varchar(16);not null;default:create;comment:额度账同步状态；create-待同步、completed-已同步、fail-同步失败"`
-	CreateTime       time.Time  `gorm:"column:create_time;type:datetime;not null;autoCreateTime;comment:创建时间"`
-	UpdateTime       time.Time  `gorm:"column:update_time;type:datetime;not null;autoUpdateTime;comment:更新时间"`
+	ID           uint64     `gorm:"column:id;primaryKey;autoIncrement;comment:自增ID"`
+	UserID       string     `gorm:"column:user_id;type:varchar(32);not null;comment:用户ID"`
+	ActivityID   int64      `gorm:"column:activity_id;not null;comment:活动ID"`
+	ActivityName string     `gorm:"column:activity_name;type:varchar(64);not null;comment:活动名称"`
+	StrategyID   int64      `gorm:"column:strategy_id;not null;comment:抽奖策略ID"`
+	OrderID      string     `gorm:"column:order_id;type:varchar(12);not null;comment:订单ID"`
+	RequestID    string     `gorm:"column:request_id;type:varchar(64);not null;comment:客户端请求幂等ID"`
+	OrderTime    time.Time  `gorm:"column:order_time;type:datetime;not null;comment:下单时间"`
+	OrderState   string     `gorm:"column:order_state;type:varchar(16);not null;default:create;comment:订单状态；create-创建、used-已使用、cancel-已作废"`
+	DrawState    string     `gorm:"column:draw_state;type:varchar(16);not null;default:created;comment:抽奖状态；created-待执行、processing-执行中、success-已完成、cancelled-已取消"`
+	ProcessingAt *time.Time `gorm:"column:processing_at;type:datetime;comment:抽奖执行权抢占时间"`
+	DrawOwner    string     `gorm:"column:draw_owner;type:varchar(32);not null;default:'';comment:当前抽奖执行者令牌"`
+	CreateTime   time.Time  `gorm:"column:create_time;type:datetime;not null;autoCreateTime;comment:创建时间"`
+	UpdateTime   time.Time  `gorm:"column:update_time;type:datetime;not null;autoUpdateTime;comment:更新时间"`
 }
 
 func (UserRaffleOrder) TableName() string {
@@ -228,17 +227,16 @@ func (p *RaffleActivityAccountMonth) ToEntity() *activity.ActivityAccountMonth {
 
 func (p *UserRaffleOrder) ToEntity() *activity.UserRaffleOrder {
 	return &activity.UserRaffleOrder{
-		UserID:           p.UserID,
-		ActivityID:       p.ActivityID,
-		ActivityName:     p.ActivityName,
-		StrategyID:       p.StrategyID,
-		OrderID:          p.OrderID,
-		RequestID:        p.RequestID,
-		OrderTime:        p.OrderTime,
-		OrderState:       activity.UserRaffleOrderState(p.OrderState),
-		DrawState:        activity.DrawState(p.DrawState),
-		ProcessingAt:     p.ProcessingAt,
-		DrawOwner:        p.DrawOwner,
-		AccountSyncState: activity.AccountSyncState(p.AccountSyncState),
+		UserID:       p.UserID,
+		ActivityID:   p.ActivityID,
+		ActivityName: p.ActivityName,
+		StrategyID:   p.StrategyID,
+		OrderID:      p.OrderID,
+		RequestID:    p.RequestID,
+		OrderTime:    p.OrderTime,
+		OrderState:   activity.UserRaffleOrderState(p.OrderState),
+		DrawState:    activity.DrawState(p.DrawState),
+		ProcessingAt: p.ProcessingAt,
+		DrawOwner:    p.DrawOwner,
 	}
 }

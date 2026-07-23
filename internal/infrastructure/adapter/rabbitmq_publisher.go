@@ -139,6 +139,6 @@ func (p *Publisher) PublishTopic(ctx context.Context, topic string, event *rabbi
 	return p.client.Publish(ctx, topic, event)
 }
 
-func (p *Publisher) PublishSaveOrder(ctx context.Context, event *rabbitmq.BaseEvent) error {
-	return p.client.Publish(ctx, activity.SaveOrderRecordTopic, event)
+func (p *Publisher) PublishDrawResult(ctx context.Context, event *rabbitmq.BaseEvent) error {
+	return p.client.Publish(ctx, activity.DrawResultTopic, event)
 }

@@ -165,23 +165,25 @@ func NewAPIApp() (*HTTPApp, error) {
 	// Asynq jobs
 	skuStockJob := job.NewActivitySkuStockConsumeJob(activityQuotaSvc)
 	dbCount := cfg.Data.Database.DbCount
-	sendAwardMsgJob := job.NewSendAwardMessage(taskSvc, activityPartakeSvc, strategySvc, dbCount)
+	sendAwardMsgJob := job.NewSendAwardMessage(taskSvc, strategySvc, dbCount)
 	strategyAwardStockJob := job.NewStrategyAwardStockConsumeJob(strategySvc)
+	drawResultPublisher := job.NewDrawResultPublisher(activityPartakeSvc, typedPublisher)
+	drawResultRecoveryJob := job.NewDrawResultRecoveryJob(activityPartakeSvc, drawResultPublisher)
 
 	// RabbitMQ listeners
 	stockListener := listener.NewActivityStockListener(activityQuotaSvc)
 	rebateListener := listener.NewRebateListener(activityQuotaSvc)
-	saveOrderListener := listener.NewSaveOrderListener(activityPartakeSvc)
+	drawResultListener := listener.NewDrawResultListener(activityPartakeSvc)
 	sendAwardListener := listener.NewSendAwardListener(awardSvc)
 
 	// Asynq worker + RabbitMQ consumer
-	asynqWorker := worker.NewAsynqWorker(&cfg.Asynq, skuStockJob, sendAwardMsgJob, strategyAwardStockJob)
-	rabbitMQConsumer := listener.NewRabbitMQConsumer(conn, stockListener, rebateListener, saveOrderListener)
+	asynqWorker := worker.NewAsynqWorker(&cfg.Asynq, skuStockJob, sendAwardMsgJob, strategyAwardStockJob, drawResultRecoveryJob)
+	rabbitMQConsumer := listener.NewRabbitMQConsumer(conn, stockListener, rebateListener, drawResultListener)
 	rabbitMQConsumer.RegisterListener(award.SendAwardTopic, sendAwardListener)
 
 	// application usecases
 	apiStrategyUsecase := api.NewStrategyUsecase(strategySvc)
-	apiActivityUsecase := api.NewActivityUsecase(activityPartakeSvc, activityQuotaSvc, stockManager, strategySvc, awardSvc, rebateSvc)
+	apiActivityUsecase := api.NewActivityUsecase(activityPartakeSvc, activityQuotaSvc, stockManager, strategySvc, drawResultPublisher, rebateSvc)
 
 	readinessChecks := baseReadinessChecks(b)
 	readinessChecks["asynq_redis"] = func(context.Context) error {

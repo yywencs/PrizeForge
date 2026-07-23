@@ -8,10 +8,10 @@ import (
 )
 
 type StockManager struct {
-	repo Repo
+	repo StockRepository
 }
 
-func NewStockManager(repo Repo) *StockManager {
+func NewStockManager(repo StockRepository) *StockManager {
 	return &StockManager{repo: repo}
 }
 

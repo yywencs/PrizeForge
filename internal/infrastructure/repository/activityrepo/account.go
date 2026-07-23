@@ -8,16 +8,22 @@ import (
 	"prizeforge/internal/infrastructure/repository/po"
 	"prizeforge/pkg/cache"
 	"prizeforge/pkg/logger"
-	"strings"
 	"time"
 
 	"gorm.io/gorm"
 )
 
 func (d *Repository) QueryActivityAccountEntity(ctx context.Context, userID string, activityID int64) (*activity.ActivityAccount, error) {
+	return d.queryActivityAccountEntityAt(ctx, userID, activityID, time.Now())
+}
+
+func (d *Repository) queryActivityAccountEntityAt(ctx context.Context, userID string, activityID int64, currentTime time.Time) (*activity.ActivityAccount, error) {
 	// 1. 查询总账户
 	var accountPO po.RaffleActivityAccount
 	db, _ := d.routerDB.DBStrategy(userID)
+	if db == nil {
+		return nil, activity.ErrDBRouterError
+	}
 	err := db.WithContext(ctx).Table("raffle_activity_account").
 		Where("user_id = ? AND activity_id = ?", userID, activityID).
 		First(&accountPO).Error
@@ -31,65 +37,24 @@ func (d *Repository) QueryActivityAccountEntity(ctx context.Context, userID stri
 
 	// 2. 查询月账户
 	var accountMonthPO po.RaffleActivityAccountMonth
-	month := time.Now().Format("2006-01")
+	month := currentTime.Format("2006-01")
 	err = db.WithContext(ctx).Table("raffle_activity_account_month").
 		Where("user_id = ? AND activity_id = ? AND month = ?", userID, activityID, month).
 		First(&accountMonthPO).Error
 
-	if err != nil {
-		if !errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, err
-		}
-
-		// 月账户缺失时，用总账户当前月额度初始化一条记录
-		accountMonthPO = po.RaffleActivityAccountMonth{
-			UserID:            accountPO.UserID,
-			ActivityID:        accountPO.ActivityID,
-			Month:             month,
-			MonthCount:        accountPO.MonthCount,
-			MonthCountSurplus: accountPO.MonthCountSurplus,
-		}
-		if createErr := db.WithContext(ctx).Table("raffle_activity_account_month").Create(&accountMonthPO).Error; createErr != nil {
-			if !errors.Is(createErr, gorm.ErrDuplicatedKey) && !strings.Contains(createErr.Error(), "Duplicate entry") {
-				return nil, createErr
-			}
-			if reloadErr := db.WithContext(ctx).Table("raffle_activity_account_month").
-				Where("user_id = ? AND activity_id = ? AND month = ?", userID, activityID, month).
-				First(&accountMonthPO).Error; reloadErr != nil {
-				return nil, reloadErr
-			}
-		}
+	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, err
 	}
 
 	// 3. 查询日账户
 	var accountDayPO po.RaffleActivityAccountDay
-	day := time.Now().Format("2006-01-02")
+	day := currentTime.Format("2006-01-02")
 	err = db.WithContext(ctx).Table("raffle_activity_account_day").
 		Where("user_id = ? AND activity_id = ? AND day = ?", userID, activityID, day).
 		First(&accountDayPO).Error
 
-	if err != nil {
-		if !errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, err
-		}
-
-		accountDayPO = po.RaffleActivityAccountDay{
-			UserID:          accountPO.UserID,
-			ActivityID:      accountPO.ActivityID,
-			Day:             day,
-			DayCount:        accountPO.DayCount,
-			DayCountSurplus: accountPO.DayCountSurplus,
-		}
-		if createErr := db.WithContext(ctx).Table("raffle_activity_account_day").Create(&accountDayPO).Error; createErr != nil {
-			if !errors.Is(createErr, gorm.ErrDuplicatedKey) && !strings.Contains(createErr.Error(), "Duplicate entry") {
-				return nil, createErr
-			}
-			if reloadErr := db.WithContext(ctx).Table("raffle_activity_account_day").
-				Where("user_id = ? AND activity_id = ? AND day = ?", userID, activityID, day).
-				First(&accountDayPO).Error; reloadErr != nil {
-				return nil, reloadErr
-			}
-		}
+	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, err
 	}
 
 	// 4. 组装实体
@@ -118,16 +83,22 @@ func (d *Repository) QueryActivityAccountEntity(ctx context.Context, userID stri
 }
 
 func (d *Repository) AssembleActivityAccountByUserId(ctx context.Context, userID string, activityID int64) error {
-	account, err := d.QueryActivityAccountEntity(ctx, userID, activityID)
+	currentTime := time.Now()
+	if d.activityAccountCacheReady(ctx, userID, activityID, currentTime) {
+		return nil
+	}
+
+	account, err := d.queryActivityAccountEntityAt(ctx, userID, activityID, currentTime)
 	if err != nil {
 		return err
 	}
-	return d.cacheActivityAccountSnapshot(ctx, account)
+	return d.cacheActivityAccountSnapshot(ctx, account, currentTime)
 }
 
 // WARNING：为了测压测，会把所有用户的额度都装配到缓存中
 func (d *Repository) AssembleActivityAccountByActivityId(ctx context.Context, activityID int64) error {
 	assembleCtx := context.Background()
+	currentTime := time.Now()
 
 	dbCount := d.routerDB.GetDBCount()
 	for i := 1; i <= dbCount; i++ {
@@ -147,13 +118,13 @@ func (d *Repository) AssembleActivityAccountByActivityId(ctx context.Context, ac
 
 		for _, account := range accounts {
 			var accountMonthPO po.RaffleActivityAccountMonth
-			month := time.Now().Format("2006-01")
+			month := currentTime.Format("2006-01")
 			_ = db.WithContext(assembleCtx).Table("raffle_activity_account_month").
 				Where("user_id = ? AND activity_id = ? AND month = ?", account.UserID, activityID, month).
 				First(&accountMonthPO).Error
 
 			var accountDayPO po.RaffleActivityAccountDay
-			day := time.Now().Format("2006-01-02")
+			day := currentTime.Format("2006-01-02")
 			_ = db.WithContext(assembleCtx).Table("raffle_activity_account_day").
 				Where("user_id = ? AND activity_id = ? AND day = ?", account.UserID, activityID, day).
 				First(&accountDayPO).Error
@@ -174,7 +145,7 @@ func (d *Repository) AssembleActivityAccountByActivityId(ctx context.Context, ac
 				activityAccount.MonthCountSurplus = accountMonthPO.MonthCountSurplus
 			} else {
 				activityAccount.MonthCount = account.MonthCount
-				activityAccount.MonthCountSurplus = account.MonthCountSurplus
+				activityAccount.MonthCountSurplus = account.MonthCount
 			}
 
 			if accountDayPO.ID > 0 {
@@ -182,18 +153,16 @@ func (d *Repository) AssembleActivityAccountByActivityId(ctx context.Context, ac
 				activityAccount.DayCountSurplus = accountDayPO.DayCountSurplus
 			} else {
 				activityAccount.DayCount = account.DayCount
-				activityAccount.DayCountSurplus = account.DayCountSurplus
+				activityAccount.DayCountSurplus = account.DayCount
 			}
 
-			_ = d.cacheActivityAccountSnapshot(assembleCtx, activityAccount)
+			_ = d.cacheActivityAccountSnapshot(assembleCtx, activityAccount, currentTime)
 		}
 	}
 	return nil
 }
 
-func (d *Repository) cacheActivityAccountSnapshot(ctx context.Context, activityAccount *activity.ActivityAccount) error {
-	currentTime := time.Now()
-
+func (d *Repository) cacheActivityAccountSnapshot(ctx context.Context, activityAccount *activity.ActivityAccount, currentTime time.Time) error {
 	key := adapter.GetActivityAccountKey(activityAccount.ActivityID, activityAccount.UserID)
 	if err := d.redis.Set(&cache.Item{
 		Ctx:   ctx,
@@ -213,4 +182,15 @@ func (d *Repository) cacheActivityAccountSnapshot(ctx context.Context, activityA
 		activityAccount.MonthCountSurplus,
 		activityAccount.DayCountSurplus,
 	)
+}
+
+func (d *Repository) activityAccountCacheReady(ctx context.Context, userID string, activityID int64, currentTime time.Time) bool {
+	keys := []string{adapter.GetActivityAccountKey(activityID, userID)}
+	keys = append(keys, activityQuotaKeys(userID, activityID, currentTime)[:3]...)
+	result, err := d.redis.Eval(ctx, `return redis.call('EXISTS', unpack(KEYS))`, keys)
+	if err != nil {
+		return false
+	}
+	existing, ok := result.(int64)
+	return ok && existing == int64(len(keys))
 }

@@ -14,17 +14,6 @@ type ActivityPartakeUsecase struct {
 	now  func() time.Time
 }
 
-// PartakeRepository 定义参与抽奖用例实际需要的最小仓储能力。
-// 具体仓储仍可实现完整 Repo；这里使用窄接口降低领域服务耦合并便于测试。
-type PartakeRepository interface {
-	QueryRaffleActivity(ctx context.Context, activityID int64) (*Activity, error)
-	CreateOrLoadUserRaffleOrder(ctx context.Context, order *UserRaffleOrder) (*UserRaffleOrder, bool, error)
-	TryClaimUserRaffleOrder(ctx context.Context, userID string, orderID string) (*DrawClaim, error)
-	ReleaseUserRaffleOrderClaim(ctx context.Context, userID string, orderID string, owner string) error
-	AsyncSaveCreatePartakeOrderAggregate(ctx context.Context, aggregate *CreatePartakeOrder) error
-	SaveCreatePartakeOrderAggregate(ctx context.Context, aggregate *CreatePartakeOrder) error
-}
-
 func NewActivityPartakeUsecase(repo PartakeRepository) *ActivityPartakeUsecase {
 	return &ActivityPartakeUsecase{
 		repo: repo,
@@ -66,37 +55,43 @@ func (s *ActivityPartakeUsecase) CreateOrder(ctx context.Context, partake *Parta
 	}
 
 	newOrder := s.buildUserRaffleOrder(userID, requestID, activity, currentTime)
-	userRaffleOrder, reused, err := s.repo.CreateOrLoadUserRaffleOrder(ctx, newOrder)
+	userRaffleOrder, publication, reused, err := s.repo.CreateOrLoadUserRaffleOrder(ctx, newOrder)
 	if err != nil {
 		return nil, err
 	}
 
 	aggregate = &CreatePartakeOrder{
-		UserID:          userID,
-		ActivityID:      activityID,
-		UserRaffleOrder: userRaffleOrder,
-		Reused:          reused,
-	}
-	// Redis 已经完成额度预占；在进入抽奖前可靠投递数据库额度同步事件。
-	// 发布失败时保留 pending reservation，同 request_id 重试不会再次扣减额度。
-	if userRaffleOrder.AccountSyncState != AccountSyncStateCompleted {
-		if err := s.repo.AsyncSaveCreatePartakeOrderAggregate(ctx, aggregate); err != nil {
-			return nil, err
-		}
+		UserID:                userID,
+		ActivityID:            activityID,
+		UserRaffleOrder:       userRaffleOrder,
+		Reused:                reused,
+		DrawResultPublication: publication,
 	}
 	return aggregate, nil
 }
 
-func (s *ActivityPartakeUsecase) TryClaimDraw(ctx context.Context, userID string, orderID string) (*DrawClaim, error) {
-	return s.repo.TryClaimUserRaffleOrder(ctx, userID, orderID)
+func (s *ActivityPartakeUsecase) TryClaimDraw(ctx context.Context, userID string, activityID int64, requestID string, orderID string) (*DrawClaim, error) {
+	return s.repo.TryClaimUserRaffleOrder(ctx, userID, activityID, requestID, orderID)
 }
 
-func (s *ActivityPartakeUsecase) ReleaseDrawClaim(ctx context.Context, userID string, orderID string, owner string) error {
-	return s.repo.ReleaseUserRaffleOrderClaim(ctx, userID, orderID, owner)
+func (s *ActivityPartakeUsecase) ReleaseDrawClaim(ctx context.Context, userID string, activityID int64, orderID string, owner string) error {
+	return s.repo.ReleaseUserRaffleOrderClaim(ctx, userID, activityID, orderID, owner)
 }
 
-func (s *ActivityPartakeUsecase) SaveOrderRecord(ctx context.Context, aggregate *CreatePartakeOrder) error {
-	return s.repo.SaveCreatePartakeOrderAggregate(ctx, aggregate)
+func (s *ActivityPartakeUsecase) CompleteDraw(ctx context.Context, result *DrawResult, owner string) (*DrawResultPublication, error) {
+	return s.repo.CompleteUserRaffleOrder(ctx, result, owner)
+}
+
+func (s *ActivityPartakeUsecase) QueryPendingDrawResults(ctx context.Context, limit int64) ([]*DrawResultPublication, error) {
+	return s.repo.QueryPendingDrawResultPublications(ctx, limit)
+}
+
+func (s *ActivityPartakeUsecase) MarkDrawResultPublished(ctx context.Context, publication *DrawResultPublication) error {
+	return s.repo.MarkDrawResultPublished(ctx, publication)
+}
+
+func (s *ActivityPartakeUsecase) SaveDrawResult(ctx context.Context, result *DrawResult) error {
+	return s.repo.SaveDrawResult(ctx, result)
 }
 
 func quotaCheckResultFromErr(err error) string {

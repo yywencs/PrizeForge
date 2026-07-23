@@ -9,12 +9,8 @@ import (
 )
 
 type fakePartakeRepository struct {
-	queryRaffleActivityFn             func(context.Context, int64) (*Activity, error)
-	createOrLoadUserRaffleOrderFn     func(context.Context, *UserRaffleOrder) (*UserRaffleOrder, bool, error)
-	tryClaimUserRaffleOrderFn         func(context.Context, string, string) (*DrawClaim, error)
-	releaseUserRaffleOrderClaimFn     func(context.Context, string, string, string) error
-	asyncSaveCreatePartakeOrderFn     func(context.Context, *CreatePartakeOrder) error
-	saveCreatePartakeOrderAggregateFn func(context.Context, *CreatePartakeOrder) error
+	queryRaffleActivityFn         func(context.Context, int64) (*Activity, error)
+	createOrLoadUserRaffleOrderFn func(context.Context, *UserRaffleOrder) (*UserRaffleOrder, *DrawResultPublication, bool, error)
 }
 
 func (f *fakePartakeRepository) QueryRaffleActivity(ctx context.Context, activityID int64) (*Activity, error) {
@@ -24,39 +20,32 @@ func (f *fakePartakeRepository) QueryRaffleActivity(ctx context.Context, activit
 	return f.queryRaffleActivityFn(ctx, activityID)
 }
 
-func (f *fakePartakeRepository) CreateOrLoadUserRaffleOrder(ctx context.Context, order *UserRaffleOrder) (*UserRaffleOrder, bool, error) {
+func (f *fakePartakeRepository) CreateOrLoadUserRaffleOrder(ctx context.Context, order *UserRaffleOrder) (*UserRaffleOrder, *DrawResultPublication, bool, error) {
 	if f.createOrLoadUserRaffleOrderFn == nil {
 		panic("unexpected CreateOrLoadUserRaffleOrder call")
 	}
 	return f.createOrLoadUserRaffleOrderFn(ctx, order)
 }
 
-func (f *fakePartakeRepository) TryClaimUserRaffleOrder(ctx context.Context, userID string, orderID string) (*DrawClaim, error) {
-	if f.tryClaimUserRaffleOrderFn == nil {
-		panic("unexpected TryClaimUserRaffleOrder call")
-	}
-	return f.tryClaimUserRaffleOrderFn(ctx, userID, orderID)
+func (f *fakePartakeRepository) TryClaimUserRaffleOrder(context.Context, string, int64, string, string) (*DrawClaim, error) {
+	panic("unexpected TryClaimUserRaffleOrder call")
 }
 
-func (f *fakePartakeRepository) ReleaseUserRaffleOrderClaim(ctx context.Context, userID string, orderID string, owner string) error {
-	if f.releaseUserRaffleOrderClaimFn == nil {
-		panic("unexpected ReleaseUserRaffleOrderClaim call")
-	}
-	return f.releaseUserRaffleOrderClaimFn(ctx, userID, orderID, owner)
+func (f *fakePartakeRepository) ReleaseUserRaffleOrderClaim(context.Context, string, int64, string, string) error {
+	panic("unexpected ReleaseUserRaffleOrderClaim call")
 }
 
-func (f *fakePartakeRepository) SaveCreatePartakeOrderAggregate(ctx context.Context, aggregate *CreatePartakeOrder) error {
-	if f.saveCreatePartakeOrderAggregateFn == nil {
-		panic("unexpected SaveCreatePartakeOrderAggregate call")
-	}
-	return f.saveCreatePartakeOrderAggregateFn(ctx, aggregate)
+func (f *fakePartakeRepository) CompleteUserRaffleOrder(context.Context, *DrawResult, string) (*DrawResultPublication, error) {
+	panic("unexpected CompleteUserRaffleOrder call")
 }
-
-func (f *fakePartakeRepository) AsyncSaveCreatePartakeOrderAggregate(ctx context.Context, aggregate *CreatePartakeOrder) error {
-	if f.asyncSaveCreatePartakeOrderFn == nil {
-		panic("unexpected AsyncSaveCreatePartakeOrderAggregate call")
-	}
-	return f.asyncSaveCreatePartakeOrderFn(ctx, aggregate)
+func (f *fakePartakeRepository) QueryPendingDrawResultPublications(context.Context, int64) ([]*DrawResultPublication, error) {
+	panic("unexpected QueryPendingDrawResultPublications call")
+}
+func (f *fakePartakeRepository) MarkDrawResultPublished(context.Context, *DrawResultPublication) error {
+	panic("unexpected MarkDrawResultPublished call")
+}
+func (f *fakePartakeRepository) SaveDrawResult(context.Context, *DrawResult) error {
+	panic("unexpected SaveDrawResult call")
 }
 
 // TestActivityPartakeUsecaseCreateOrderRejectsInvalidParams 验证创建抽奖订单时，
@@ -199,7 +188,6 @@ func TestActivityPartakeUsecaseCreateOrderBuildsOrder(t *testing.T) {
 	}
 
 	var capturedOrder *UserRaffleOrder
-	var publishedAggregate *CreatePartakeOrder
 	repo := &fakePartakeRepository{
 		queryRaffleActivityFn: func(_ context.Context, activityID int64) (*Activity, error) {
 			if activityID != activity.ActivityID {
@@ -207,13 +195,9 @@ func TestActivityPartakeUsecaseCreateOrderBuildsOrder(t *testing.T) {
 			}
 			return activity, nil
 		},
-		createOrLoadUserRaffleOrderFn: func(_ context.Context, order *UserRaffleOrder) (*UserRaffleOrder, bool, error) {
+		createOrLoadUserRaffleOrderFn: func(_ context.Context, order *UserRaffleOrder) (*UserRaffleOrder, *DrawResultPublication, bool, error) {
 			capturedOrder = order
-			return order, false, nil
-		},
-		asyncSaveCreatePartakeOrderFn: func(_ context.Context, aggregate *CreatePartakeOrder) error {
-			publishedAggregate = aggregate
-			return nil
+			return order, nil, false, nil
 		},
 	}
 	usecase := NewActivityPartakeUsecase(repo)
@@ -238,9 +222,6 @@ func TestActivityPartakeUsecaseCreateOrderBuildsOrder(t *testing.T) {
 	}
 	if aggregate.UserRaffleOrder != capturedOrder {
 		t.Fatal("CreateOrder() did not return the repository's canonical order")
-	}
-	if publishedAggregate != aggregate {
-		t.Fatal("CreateOrder() did not reliably publish the quota synchronization aggregate")
 	}
 	if capturedOrder == nil {
 		t.Fatal("CreateOrLoadUserRaffleOrder() order = nil")
@@ -276,7 +257,7 @@ func TestActivityPartakeUsecaseCreateOrderPropagatesRepositoryResult(t *testing.
 		EndDateTime:   fixedNow.Add(time.Hour),
 	}
 	repositoryErr := errors.New("create or load order")
-	existingOrder := &UserRaffleOrder{OrderID: "000000000001", AccountSyncState: AccountSyncStateCompleted}
+	existingOrder := &UserRaffleOrder{OrderID: "000000000001"}
 
 	tests := []struct {
 		name      string
@@ -305,8 +286,8 @@ func TestActivityPartakeUsecaseCreateOrderPropagatesRepositoryResult(t *testing.
 				queryRaffleActivityFn: func(context.Context, int64) (*Activity, error) {
 					return activity, nil
 				},
-				createOrLoadUserRaffleOrderFn: func(context.Context, *UserRaffleOrder) (*UserRaffleOrder, bool, error) {
-					return tt.order, tt.reused, tt.repoErr
+				createOrLoadUserRaffleOrderFn: func(context.Context, *UserRaffleOrder) (*UserRaffleOrder, *DrawResultPublication, bool, error) {
+					return tt.order, nil, tt.reused, tt.repoErr
 				},
 			}
 			usecase := NewActivityPartakeUsecase(repo)
@@ -334,50 +315,5 @@ func TestActivityPartakeUsecaseCreateOrderPropagatesRepositoryResult(t *testing.
 				t.Fatalf("CreateOrder() result = (%p, %v), want (%p, %v)", aggregate.UserRaffleOrder, aggregate.Reused, tt.wantOrder, tt.reused)
 			}
 		})
-	}
-}
-
-// TestActivityPartakeUsecaseCreateOrderRequiresQuotaSyncPublish 验证 Redis 已预占额度但
-// 数据库额度同步消息发布失败时不会继续抽奖；同一请求可随后重试并复用原预占。
-func TestActivityPartakeUsecaseCreateOrderRequiresQuotaSyncPublish(t *testing.T) {
-	fixedNow := time.Date(2026, time.July, 20, 12, 0, 0, 0, time.UTC)
-	publishErr := errors.New("publish quota synchronization")
-	order := &UserRaffleOrder{
-		OrderID:          "000000000001",
-		RequestID:        "request-1",
-		AccountSyncState: AccountSyncStateCreate,
-	}
-	repo := &fakePartakeRepository{
-		queryRaffleActivityFn: func(context.Context, int64) (*Activity, error) {
-			return &Activity{
-				ActivityID:    100301,
-				State:         ActivityStateOpen,
-				BeginDateTime: fixedNow.Add(-time.Hour),
-				EndDateTime:   fixedNow.Add(time.Hour),
-			}, nil
-		},
-		createOrLoadUserRaffleOrderFn: func(context.Context, *UserRaffleOrder) (*UserRaffleOrder, bool, error) {
-			return order, true, nil
-		},
-		asyncSaveCreatePartakeOrderFn: func(_ context.Context, aggregate *CreatePartakeOrder) error {
-			if aggregate.UserRaffleOrder != order {
-				t.Fatal("published aggregate does not contain the canonical order")
-			}
-			return publishErr
-		},
-	}
-	usecase := NewActivityPartakeUsecase(repo)
-	usecase.now = func() time.Time { return fixedNow }
-
-	aggregate, err := usecase.CreateOrder(context.Background(), &PartakeRaffleActivity{
-		UserID:     "user-1",
-		ActivityID: 100301,
-		RequestID:  "request-1",
-	})
-	if !errors.Is(err, publishErr) {
-		t.Fatalf("CreateOrder() error = %v, want %v", err, publishErr)
-	}
-	if aggregate != nil {
-		t.Fatalf("CreateOrder() aggregate = %#v, want nil", aggregate)
 	}
 }

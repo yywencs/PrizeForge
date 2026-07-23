@@ -70,6 +70,8 @@ const (
 	activityAccountMonthSurplusKey = "activity_account_month_surplus_%d_%s_%s"
 	activityAccountDaySurplusKey   = "activity_account_day_surplus_%d_%s_%s"
 	pendingRaffleOrderKey          = "pending_raffle_order_%d_%s"
+	drawRequestResultKey           = "draw_request_result_%d_%s_%s"
+	drawResultStreamKey            = "draw_result_stream"
 	activityResultHashKey          = "activity_result_hash_%d_%d" // activityID + 分片号
 )
 
@@ -103,6 +105,14 @@ func GetActivityAccountDaySurplusKey(activityID int64, userID string, day string
 
 func GetPendingRaffleOrderKey(activityID int64, userID string) string {
 	return fmt.Sprintf(pendingRaffleOrderKey, activityID, userID)
+}
+
+func GetDrawRequestResultKey(activityID int64, userID string, requestID string) string {
+	return fmt.Sprintf(drawRequestResultKey, activityID, userID, requestID)
+}
+
+func GetDrawResultStreamKey() string {
+	return drawResultStreamKey
 }
 
 func GetActivityResultHashKey(activityID int64, shard int) string {

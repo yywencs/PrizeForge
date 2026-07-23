@@ -213,10 +213,6 @@ func (p *integrationActivityPublisher) PublishStockZero(_ context.Context, event
 	return nil
 }
 
-func (p *integrationActivityPublisher) PublishSaveOrder(context.Context, *rabbitmq.BaseEvent) error {
-	return nil
-}
-
 func (p *integrationActivityPublisher) snapshotStockZeroEvents() []*rabbitmq.BaseEvent {
 	p.mu.Lock()
 	defer p.mu.Unlock()

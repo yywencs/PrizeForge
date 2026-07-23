@@ -4,20 +4,20 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"prizeforge/internal/domain/activity"
+	"prizeforge/internal/domain/award"
+	"prizeforge/internal/domain/strategy"
 	"prizeforge/internal/infrastructure/adapter"
 	"prizeforge/internal/infrastructure/repository/po"
 	"prizeforge/pkg/cache"
-	"prizeforge/pkg/rabbitmq"
 	"time"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
-
-const drawProcessingLease = 30 * time.Second
 
 func (r *Repository) QueryRaffleActivity(ctx context.Context, activityID int64) (*activity.Activity, error) {
 	var activity activity.Activity
@@ -118,136 +118,15 @@ func (r *Repository) QueryNoUsedRaffleOrder(ctx context.Context, userID string, 
 	return &order, nil
 }
 
-// CreateOrLoadUserRaffleOrder 使用 Redis Lua 原子预占总、月、日额度，并同步创建轻量订单：
+// CreateOrLoadUserRaffleOrder 使用 Redis Lua 原子预占总、月、日额度和完整临时订单：
 //  1. 同 request_id 重试复用 Redis 中第一次分配的 order_id；
 //  2. 用户已有未完成订单时拒绝新的 request_id；
-//  3. 新订单只写入 MySQL，数据库额度由 save_order_record 消费者异步同步。
-func (r *Repository) CreateOrLoadUserRaffleOrder(ctx context.Context, order *activity.UserRaffleOrder) (*activity.UserRaffleOrder, bool, error) {
+//  3. 已完成请求直接复用 Redis 保存的标准抽奖结果。
+func (r *Repository) CreateOrLoadUserRaffleOrder(ctx context.Context, order *activity.UserRaffleOrder) (*activity.UserRaffleOrder, *activity.DrawResultPublication, bool, error) {
 	if order == nil || order.UserID == "" || order.ActivityID <= 0 || order.RequestID == "" || order.OrderID == "" {
-		return nil, false, activity.ErrInvalidParams
+		return nil, nil, false, activity.ErrInvalidParams
 	}
-
-	db, tableSuffix := r.routerDB.DBStrategy(order.UserID)
-	if db == nil {
-		return nil, false, activity.ErrDBRouterError
-	}
-	orderTable := "user_raffle_order_" + tableSuffix
-
-	// 正常重试走有索引的只读快路径。
-	var existingPO po.UserRaffleOrder
-	err := db.WithContext(ctx).
-		Table(orderTable).
-		Where("user_id = ? AND activity_id = ? AND request_id = ?", order.UserID, order.ActivityID, order.RequestID).
-		First(&existingPO).Error
-	if err == nil {
-		return existingPO.ToEntity(), true, nil
-	}
-	if !errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, false, err
-	}
-
-	canonicalOrderID, reservationReused, err := r.reserveActivityQuota(ctx, order)
-	if err != nil {
-		return nil, false, err
-	}
-
-	orderPO := &po.UserRaffleOrder{
-		UserID:           order.UserID,
-		ActivityID:       order.ActivityID,
-		ActivityName:     order.ActivityName,
-		StrategyID:       order.StrategyID,
-		OrderID:          canonicalOrderID,
-		RequestID:        order.RequestID,
-		OrderTime:        order.OrderTime,
-		OrderState:       string(activity.UserRaffleOrderStateCreate),
-		DrawState:        string(activity.DrawStateCreated),
-		AccountSyncState: string(activity.AccountSyncStateCreate),
-	}
-	createResult := db.WithContext(ctx).
-		Table(orderTable).
-		Clauses(clause.OnConflict{DoNothing: true}).
-		Create(orderPO)
-	if createResult.Error != nil {
-		// Redis 中的预占和 pending order 会被保留；同 request_id 重试会复用并再次尝试落单。
-		return nil, false, createResult.Error
-	}
-	if createResult.RowsAffected == 1 {
-		return orderPO.ToEntity(), reservationReused, nil
-	}
-
-	// 并发相同 request_id 可能同时通过 Redis 复用结果并尝试插入，唯一索引决定标准订单。
-	if err := db.WithContext(ctx).
-		Table(orderTable).
-		Where("user_id = ? AND activity_id = ? AND request_id = ?", order.UserID, order.ActivityID, order.RequestID).
-		First(&existingPO).Error; err != nil {
-		return nil, false, err
-	}
-	return existingPO.ToEntity(), reservationReused, nil
-}
-
-func (r *Repository) TryClaimUserRaffleOrder(ctx context.Context, userID string, orderID string) (*activity.DrawClaim, error) {
-	db, tableSuffix := r.routerDB.DBStrategy(userID)
-	if db == nil {
-		return nil, activity.ErrDBRouterError
-	}
-	orderTable := "user_raffle_order_" + tableSuffix
-	now := time.Now()
-	owner, err := newDrawOwner()
-	if err != nil {
-		return nil, err
-	}
-
-	res := db.WithContext(ctx).Table(orderTable).
-		Where("user_id = ? AND order_id = ? AND draw_state = ?", userID, orderID, activity.DrawStateCreated).
-		Updates(map[string]interface{}{
-			"draw_state":    activity.DrawStateProcessing,
-			"processing_at": now,
-			"draw_owner":    owner,
-			"update_time":   now,
-		})
-	if res.Error != nil {
-		return nil, res.Error
-	}
-	if res.RowsAffected == 1 {
-		return &activity.DrawClaim{Status: activity.DrawClaimAcquired, Owner: owner}, nil
-	}
-
-	staleBefore := now.Add(-drawProcessingLease)
-	res = db.WithContext(ctx).Table(orderTable).
-		Where("user_id = ? AND order_id = ? AND draw_state = ? AND (processing_at IS NULL OR processing_at < ?)",
-			userID, orderID, activity.DrawStateProcessing, staleBefore).
-		Updates(map[string]interface{}{
-			"processing_at": now,
-			"draw_owner":    owner,
-			"update_time":   now,
-		})
-	if res.Error != nil {
-		return nil, res.Error
-	}
-	if res.RowsAffected == 1 {
-		return &activity.DrawClaim{Status: activity.DrawClaimAcquired, Owner: owner}, nil
-	}
-
-	var orderPO po.UserRaffleOrder
-	if err := db.WithContext(ctx).Table(orderTable).
-		Where("user_id = ? AND order_id = ?", userID, orderID).
-		First(&orderPO).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, activity.ErrRecordNotFound
-		}
-		return nil, err
-	}
-
-	switch activity.DrawState(orderPO.DrawState) {
-	case activity.DrawStateProcessing:
-		return &activity.DrawClaim{Status: activity.DrawClaimProcessing}, nil
-	case activity.DrawStateSuccess:
-		return &activity.DrawClaim{Status: activity.DrawClaimCompleted}, nil
-	case activity.DrawStateCancelled:
-		return &activity.DrawClaim{Status: activity.DrawClaimCancelled}, nil
-	default:
-		return nil, fmt.Errorf("unexpected draw state %q for order %s", orderPO.DrawState, orderID)
-	}
+	return r.reserveActivityQuota(ctx, order)
 }
 
 func newDrawOwner() (string, error) {
@@ -256,22 +135,6 @@ func newDrawOwner() (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(raw[:]), nil
-}
-
-func (r *Repository) ReleaseUserRaffleOrderClaim(ctx context.Context, userID string, orderID string, owner string) error {
-	db, tableSuffix := r.routerDB.DBStrategy(userID)
-	if db == nil {
-		return activity.ErrDBRouterError
-	}
-	return db.WithContext(ctx).Table("user_raffle_order_"+tableSuffix).
-		Where("user_id = ? AND order_id = ? AND draw_state = ? AND draw_owner = ?",
-			userID, orderID, activity.DrawStateProcessing, owner).
-		Updates(map[string]interface{}{
-			"draw_state":    activity.DrawStateCreated,
-			"processing_at": nil,
-			"draw_owner":    "",
-			"update_time":   time.Now(),
-		}).Error
 }
 
 func (r *Repository) QueryActivityAccountDay(ctx context.Context, userID string, activityID int64, day string) (*activity.ActivityAccountDay, error) {
@@ -306,51 +169,30 @@ func (r *Repository) QueryActivityAccountMonth(ctx context.Context, userID strin
 	return po.ToEntity(), nil
 }
 
-func (r *Repository) AsyncSaveCreatePartakeOrderAggregate(ctx context.Context, createPartakeOrderAggregate *activity.CreatePartakeOrder) error {
-	baseEvent := rabbitmq.NewBaseEvent(createPartakeOrderAggregate)
-	return r.stockZeroPublisher.PublishSaveOrder(ctx, baseEvent)
-}
-
-func (r *Repository) SaveCreatePartakeOrderAggregate(ctx context.Context, createPartakeOrderAggregate *activity.CreatePartakeOrder) error {
-	userID := createPartakeOrderAggregate.UserID
-	if createPartakeOrderAggregate.UserRaffleOrder == nil || createPartakeOrderAggregate.UserRaffleOrder.OrderID == "" {
+// SaveDrawResult 将 Redis 已完成的抽奖结果一次性持久化：
+// 订单、MySQL 总/月/日额度、中奖记录和后续发奖/库存 Outbox 在同一事务提交。
+func (r *Repository) SaveDrawResult(ctx context.Context, result *activity.DrawResult) error {
+	if result == nil || result.UserID == "" || result.ActivityID <= 0 || result.StrategyID <= 0 ||
+		result.OrderID == "" || result.RequestID == "" || result.OrderTime.IsZero() ||
+		result.AwardID <= 0 || result.AwardTime.IsZero() {
 		return activity.ErrInvalidParams
 	}
-
-	orderID := createPartakeOrderAggregate.UserRaffleOrder.OrderID
+	userID, orderID := result.UserID, result.OrderID
 	db, tableSuffix := r.routerDB.DBStrategy(userID)
 	if db == nil {
 		return activity.ErrDBRouterError
 	}
 
-	return db.Transaction(func(tx *gorm.DB) error {
-		orderTable := "user_raffle_order_" + tableSuffix
-		var orderPO po.UserRaffleOrder
-		if err := tx.WithContext(ctx).
-			Table(orderTable).
-			Clauses(clause.Locking{Strength: "UPDATE"}).
-			Where("user_id = ? AND order_id = ?", userID, orderID).
-			First(&orderPO).Error; err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return activity.ErrRecordNotFound
-			}
-			return err
-		}
-
-		if orderPO.AccountSyncState == string(activity.AccountSyncStateCompleted) {
-			return nil
-		}
-
-		activityID := orderPO.ActivityID
-		orderMonth := orderPO.OrderTime.Format("2006-01")
-		orderDay := orderPO.OrderTime.Format("2006-01-02")
+	txnErr := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		now := time.Now()
+		orderTable := "user_raffle_order_" + tableSuffix
+		awardTable := "user_award_record_" + tableSuffix
 
+		// 先锁用户活动账户，使同一用户的重复 RabbitMQ 消息串行化。
 		var accountPO po.RaffleActivityAccount
-		if err := tx.WithContext(ctx).
-			Table("raffle_activity_account").
+		if err := tx.Table("raffle_activity_account").
 			Clauses(clause.Locking{Strength: "UPDATE"}).
-			Where("user_id = ? AND activity_id = ?", userID, activityID).
+			Where("user_id = ? AND activity_id = ?", userID, result.ActivityID).
 			First(&accountPO).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return activity.ErrRecordNotFound
@@ -358,33 +200,55 @@ func (r *Repository) SaveCreatePartakeOrderAggregate(ctx context.Context, create
 			return err
 		}
 
+		// 订单存在即表示这条完整结果已提交；校验标准结果后幂等成功，不再扣额度。
+		var existingOrder po.UserRaffleOrder
+		orderErr := tx.Table(orderTable).
+			Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("user_id = ? AND activity_id = ? AND request_id = ?", userID, result.ActivityID, result.RequestID).
+			First(&existingOrder).Error
+		if orderErr == nil {
+			if existingOrder.OrderID != orderID {
+				return fmt.Errorf("draw result request conflict: request_id=%s existing_order=%s incoming_order=%s",
+					result.RequestID, existingOrder.OrderID, orderID)
+			}
+			var existingAward po.UserAwardRecord
+			if err := tx.Table(awardTable).
+				Where("user_id = ? AND order_id = ?", userID, orderID).
+				First(&existingAward).Error; err != nil {
+				return fmt.Errorf("load persisted draw award: %w", err)
+			}
+			if existingAward.AwardID != int64(result.AwardID) {
+				return fmt.Errorf("draw result award conflict: order_id=%s existing_award=%d incoming_award=%d",
+					orderID, existingAward.AwardID, result.AwardID)
+			}
+			return nil
+		}
+		if !errors.Is(orderErr, gorm.ErrRecordNotFound) {
+			return orderErr
+		}
+
 		if accountPO.TotalCountSurplus <= 0 {
 			return activity.ErrActivityQuotaError
 		}
-		if accountPO.MonthCountSurplus <= 0 {
-			return activity.ErrActivityAccountMonthCountSurplusNotEnough
-		}
-		if accountPO.DayCountSurplus <= 0 {
-			return activity.ErrActivityAccountDayCountSurplusNotEnough
-		}
 
 		res := tx.Table("raffle_activity_account").
-			Where("user_id = ? AND activity_id = ?", userID, activityID).
+			Where("user_id = ? AND activity_id = ?", userID, result.ActivityID).
 			Updates(map[string]interface{}{
 				"total_count_surplus": gorm.Expr("total_count_surplus - 1"),
-				"day_count_surplus":   gorm.Expr("day_count_surplus - 1"),
-				"month_count_surplus": gorm.Expr("month_count_surplus - 1"),
+				"current_order_id":    "",
 				"update_time":         now,
 			})
 		if res.Error != nil {
 			return res.Error
 		}
 
+		orderMonth := result.OrderTime.Format("2006-01")
+		orderDay := result.OrderTime.Format("2006-01-02")
 		var monthPO po.RaffleActivityAccountMonth
-		err := tx.WithContext(ctx).
+		err := tx.
 			Table("raffle_activity_account_month").
 			Clauses(clause.Locking{Strength: "UPDATE"}).
-			Where("user_id = ? AND activity_id = ? AND month = ?", userID, activityID, orderMonth).
+			Where("user_id = ? AND activity_id = ? AND month = ?", userID, result.ActivityID, orderMonth).
 			First(&monthPO).Error
 		if err == nil {
 			if monthPO.MonthCountSurplus <= 0 {
@@ -392,7 +256,7 @@ func (r *Repository) SaveCreatePartakeOrderAggregate(ctx context.Context, create
 			}
 			resMonth := tx.Table("raffle_activity_account_month").
 				Where("user_id = ? AND activity_id = ? AND month = ?",
-					userID, activityID, orderMonth).
+					userID, result.ActivityID, orderMonth).
 				Updates(map[string]interface{}{
 					"month_count_surplus": gorm.Expr("month_count_surplus - 1"),
 					"update_time":         now,
@@ -406,10 +270,10 @@ func (r *Repository) SaveCreatePartakeOrderAggregate(ctx context.Context, create
 		} else if errors.Is(err, gorm.ErrRecordNotFound) {
 			monthPO = po.RaffleActivityAccountMonth{
 				UserID:            userID,
-				ActivityID:        activityID,
+				ActivityID:        result.ActivityID,
 				Month:             orderMonth,
 				MonthCount:        accountPO.MonthCount,
-				MonthCountSurplus: accountPO.MonthCountSurplus - 1,
+				MonthCountSurplus: accountPO.MonthCount - 1,
 			}
 			if createMonthErr := tx.Table("raffle_activity_account_month").Create(&monthPO).Error; createMonthErr != nil {
 				if errors.Is(createMonthErr, gorm.ErrDuplicatedKey) {
@@ -422,10 +286,10 @@ func (r *Repository) SaveCreatePartakeOrderAggregate(ctx context.Context, create
 		}
 
 		var dayPO po.RaffleActivityAccountDay
-		err = tx.WithContext(ctx).
+		err = tx.
 			Table("raffle_activity_account_day").
 			Clauses(clause.Locking{Strength: "UPDATE"}).
-			Where("user_id = ? AND activity_id = ? AND day = ?", userID, activityID, orderDay).
+			Where("user_id = ? AND activity_id = ? AND day = ?", userID, result.ActivityID, orderDay).
 			First(&dayPO).Error
 		if err == nil {
 			if dayPO.DayCountSurplus <= 0 {
@@ -433,7 +297,7 @@ func (r *Repository) SaveCreatePartakeOrderAggregate(ctx context.Context, create
 			}
 			resDay := tx.Table("raffle_activity_account_day").
 				Where("user_id = ? AND activity_id = ? AND day = ?",
-					userID, activityID, orderDay).
+					userID, result.ActivityID, orderDay).
 				Updates(map[string]interface{}{
 					"day_count_surplus": gorm.Expr("day_count_surplus - 1"),
 					"update_time":       now,
@@ -447,10 +311,10 @@ func (r *Repository) SaveCreatePartakeOrderAggregate(ctx context.Context, create
 		} else if errors.Is(err, gorm.ErrRecordNotFound) {
 			dayPO = po.RaffleActivityAccountDay{
 				UserID:          userID,
-				ActivityID:      activityID,
+				ActivityID:      result.ActivityID,
 				Day:             orderDay,
 				DayCount:        accountPO.DayCount,
-				DayCountSurplus: accountPO.DayCountSurplus - 1,
+				DayCountSurplus: accountPO.DayCount - 1,
 			}
 			if createDayErr := tx.Table("raffle_activity_account_day").Create(&dayPO).Error; createDayErr != nil {
 				if errors.Is(createDayErr, gorm.ErrDuplicatedKey) {
@@ -462,17 +326,97 @@ func (r *Repository) SaveCreatePartakeOrderAggregate(ctx context.Context, create
 			return err
 		}
 
-		if err := tx.Table(orderTable).
-			Where("user_id = ? AND order_id = ?", userID, orderID).
-			Updates(map[string]interface{}{
-				"account_sync_state": string(activity.AccountSyncStateCompleted),
-				"update_time":        now,
-			}).Error; err != nil {
+		orderPO := &po.UserRaffleOrder{
+			UserID:       userID,
+			ActivityID:   result.ActivityID,
+			ActivityName: result.ActivityName,
+			StrategyID:   result.StrategyID,
+			OrderID:      orderID,
+			RequestID:    result.RequestID,
+			OrderTime:    result.OrderTime,
+			OrderState:   string(activity.UserRaffleOrderStateUsed),
+			DrawState:    string(activity.DrawStateSuccess),
+			CreateTime:   now,
+			UpdateTime:   now,
+		}
+		if err := tx.Table(orderTable).Create(orderPO).Error; err != nil {
 			return err
+		}
+
+		awardPO := &po.UserAwardRecord{
+			UserID:     userID,
+			ActivityID: result.ActivityID,
+			StrategyID: result.StrategyID,
+			OrderID:    orderID,
+			AwardID:    int64(result.AwardID),
+			AwardTitle: result.AwardTitle,
+			AwardTime:  result.AwardTime,
+			AwardState: string(award.AwardStateCreate),
+			CreateTime: now,
+			UpdateTime: now,
+		}
+		if err := tx.Table(awardTable).Create(awardPO).Error; err != nil {
+			return err
+		}
+
+		sendAwardPayload, err := json.Marshal(&award.SendAwardMessage{
+			UserID:     userID,
+			OrderID:    orderID,
+			AwardID:    result.AwardID,
+			AwardTitle: result.AwardTitle,
+		})
+		if err != nil {
+			return err
+		}
+		sendAwardTask := &po.Task{
+			UserID:     userID,
+			Topic:      award.SendAwardTopic,
+			MessageID:  userID + ":" + orderID,
+			Message:    string(sendAwardPayload),
+			State:      string(award.TaskStateCreate),
+			CreateTime: now,
+			UpdateTime: now,
+		}
+		if err := tx.Table("task").Create(sendAwardTask).Error; err != nil {
+			return err
+		}
+
+		if result.StockReserved {
+			stockPayload, err := json.Marshal(&strategy.AwardStockConsumeMessage{
+				UserID:     userID,
+				OrderID:    orderID,
+				StrategyID: result.StrategyID,
+				AwardID:    int64(result.AwardID),
+			})
+			if err != nil {
+				return err
+			}
+			stockTask := &po.Task{
+				UserID:     userID,
+				Topic:      strategy.AwardStockSyncTopic,
+				MessageID:  "stock:" + userID + ":" + orderID,
+				Message:    string(stockPayload),
+				State:      string(award.TaskStateCreate),
+				CreateTime: now,
+				UpdateTime: now,
+			}
+			if err := tx.Table("task").Create(stockTask).Error; err != nil {
+				return err
+			}
 		}
 
 		return nil
 	})
+	if txnErr != nil {
+		return txnErr
+	}
+
+	if err := r.clearPersistedPendingDraw(context.WithoutCancel(ctx), result); err != nil {
+		return fmt.Errorf("clear persisted Redis draw: %w", err)
+	}
+	accountKey := adapter.GetActivityAccountKey(result.ActivityID, result.UserID)
+	_ = r.redis.Delete(context.WithoutCancel(ctx), accountKey)
+	return nil
 }
 
 func (r *Repository) QueryRaffleActivityAccountPartakeCount(ctx context.Context, userID string, activityID int64) (int64, error) {

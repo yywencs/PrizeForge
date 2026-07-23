@@ -74,20 +74,19 @@ func newAwardTransactionFixture(t *testing.T) *awardTransactionFixture {
 		UpdateTime:        now,
 	}
 	raffleOrder := &po.UserRaffleOrder{
-		UserID:           userID,
-		ActivityID:       integrationActivityID,
-		ActivityName:     "集成测试活动",
-		StrategyID:       integrationStrategyID,
-		OrderID:          orderID,
-		RequestID:        "request-" + orderID,
-		OrderTime:        now,
-		OrderState:       "create",
-		DrawState:        "processing",
-		ProcessingAt:     &fixture.processingAt,
-		DrawOwner:        drawOwner,
-		AccountSyncState: "completed",
-		CreateTime:       now,
-		UpdateTime:       now,
+		UserID:       userID,
+		ActivityID:   integrationActivityID,
+		ActivityName: "集成测试活动",
+		StrategyID:   integrationStrategyID,
+		OrderID:      orderID,
+		RequestID:    "request-" + orderID,
+		OrderTime:    now,
+		OrderState:   "create",
+		DrawState:    "processing",
+		ProcessingAt: &fixture.processingAt,
+		DrawOwner:    drawOwner,
+		CreateTime:   now,
+		UpdateTime:   now,
 	}
 
 	if err := db.Transaction(func(tx *gorm.DB) error {

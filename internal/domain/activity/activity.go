@@ -13,7 +13,10 @@ const (
 	ActivitySkuStockZeroTopic = "activity_sku_stock_zero_topic"
 
 	ActivityAwardSendTopic = "activity_award_send_topic"
-	SaveOrderRecordTopic   = "save_order_record"
+	DrawResultTopic        = "draw_result"
+
+	// TaskTypeDrawResultPublish 定义 Redis Stream 抽奖结果补偿发布任务。
+	TaskTypeDrawResultPublish = "activity:draw_result_publish"
 )
 
 const (
@@ -113,8 +116,6 @@ type UserRaffleOrder struct {
 	ProcessingAt *time.Time
 	// DrawOwner 当前执行者令牌；超时接管后用于阻止旧执行者提交结果。
 	DrawOwner string
-	// AccountSyncState 表示 Redis 已预占的额度是否已经同步到 MySQL。
-	AccountSyncState AccountSyncState
 }
 
 type ActivitySku struct {
@@ -170,18 +171,30 @@ type CreatePartakeOrder struct {
 	UserRaffleOrder *UserRaffleOrder
 	// Reused 是否复用了未消费的 pending 订单（true 表示这是重试/复用路径）
 	Reused bool
+	// DrawResultPublication 表示相同 request_id 已完成的结果及其投递状态。
+	DrawResultPublication *DrawResultPublication
 }
 
-type SaveOrderTaskMessage struct {
-	UserID  string `json:"u"`
-	OrderID string `json:"o"`
+// DrawResult 是 Redis-first 抽奖完成后的标准结果，也是 RabbitMQ 的业务载荷。
+type DrawResult struct {
+	UserID        string    `json:"user_id"`
+	ActivityID    int64     `json:"activity_id"`
+	ActivityName  string    `json:"activity_name"`
+	StrategyID    int64     `json:"strategy_id"`
+	OrderID       string    `json:"order_id"`
+	RequestID     string    `json:"request_id"`
+	OrderTime     time.Time `json:"order_time"`
+	AwardID       int       `json:"award_id"`
+	AwardTitle    string    `json:"award_title"`
+	AwardTime     time.Time `json:"award_time"`
+	StockReserved bool      `json:"stock_reserved"`
 }
 
-func (m *SaveOrderTaskMessage) ToCreatePartakeOrder() *CreatePartakeOrder {
-	return &CreatePartakeOrder{
-		UserID:          m.UserID,
-		UserRaffleOrder: &UserRaffleOrder{UserID: m.UserID, OrderID: m.OrderID},
-	}
+// DrawResultPublication 是 Redis 侧的投递信封，不属于抽奖业务结果。
+type DrawResultPublication struct {
+	StreamID        string      `json:"stream_id"`
+	BrokerConfirmed bool        `json:"broker_confirmed"`
+	Result          *DrawResult `json:"result"`
 }
 
 type SkuRecharge struct {
@@ -258,17 +271,10 @@ const (
 )
 
 type DrawClaim struct {
-	Status DrawClaimStatus
-	Owner  string
+	Status      DrawClaimStatus
+	Owner       string
+	Publication *DrawResultPublication
 }
-
-type AccountSyncState string
-
-const (
-	AccountSyncStateCreate    AccountSyncState = "create"
-	AccountSyncStateCompleted AccountSyncState = "completed"
-	AccountSyncStateFail      AccountSyncState = "fail"
-)
 
 const (
 	ActivityOrderStateCompleted = "completed"

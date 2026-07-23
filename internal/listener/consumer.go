@@ -30,7 +30,7 @@ type Listener interface {
 //
 // 使用方式：
 //
-//	consumer := NewRabbitMQConsumer(conn, stockLsn, rebateLsn, orderLsn)
+//	consumer := NewRabbitMQConsumer(conn, stockLsn, rebateLsn, drawResultLsn)
 //	go consumer.Start(ctx)
 //	defer consumer.Shutdown()
 type RabbitMQConsumer struct {
@@ -45,12 +45,12 @@ type RabbitMQConsumer struct {
 // Topic 与 Listener 对应关系：
 //   - activity_sku_stock_zero_topic → ActivityStockListener（库存归零）
 //   - activity_award_send_topic      → RebateListener（返利发奖）
-//   - save_order_record              → SaveOrderListener（订单持久化）
+//   - draw_result                    → DrawResultListener（完整抽奖结果事务落库）
 func NewRabbitMQConsumer(
 	conn *amqp.Connection,
 	stockListener *ActivityStockListener,
 	rebateListener *RebateListener,
-	saveOrderListener *SaveOrderListener,
+	drawResultListener *DrawResultListener,
 ) *RabbitMQConsumer {
 	c := &RabbitMQConsumer{
 		conn:      conn,
@@ -63,8 +63,8 @@ func NewRabbitMQConsumer(
 	if rebateListener != nil {
 		c.RegisterListener(activity.ActivityAwardSendTopic, rebateListener)
 	}
-	if saveOrderListener != nil {
-		c.RegisterListener(activity.SaveOrderRecordTopic, saveOrderListener)
+	if drawResultListener != nil {
+		c.RegisterListener(activity.DrawResultTopic, drawResultListener)
 	}
 
 	return c

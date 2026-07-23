@@ -18,7 +18,6 @@ rabbitmq:
     activity_sku_stock_zero: activity_sku_stock_zero
     send_award: send_award
     send_rebate: send_rebate
-    save_order_record: save_order_record
 
 data:
   mysql:
