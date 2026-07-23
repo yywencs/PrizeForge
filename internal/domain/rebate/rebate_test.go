@@ -3,8 +3,9 @@ package rebate
 import (
 	"context"
 	"errors"
-	"strconv"
 	"testing"
+
+	"github.com/google/uuid"
 )
 
 type fakeRebateRepository struct {
@@ -94,7 +95,7 @@ func TestBehaviorRebateUsecaseCreateOrderStopsBeforeSave(t *testing.T) {
 }
 
 // TestBehaviorRebateUsecaseCreateOrderBuildsAndSavesOrders 验证每条返利配置都会生成一条
-// 12 位数字订单，并把用户、行为、返利配置、外部业务号和幂等 BizID 完整写入保存聚合。
+// UUIDv7 订单，并把用户、行为、返利配置、外部业务号和幂等 BizID 完整写入保存聚合。
 func TestBehaviorRebateUsecaseCreateOrderBuildsAndSavesOrders(t *testing.T) {
 	configs := []*DailyBehaviorRebate{
 		{
@@ -151,11 +152,15 @@ func TestBehaviorRebateUsecaseCreateOrderBuildsAndSavesOrders(t *testing.T) {
 
 	for i, order := range captured.BehaviorRebateOrders {
 		config := configs[i]
-		if len(order.OrderID) != 12 {
-			t.Fatalf("order[%d].OrderID length = %d, want 12: %q", i, len(order.OrderID), order.OrderID)
+		if len(order.OrderID) != 32 {
+			t.Fatalf("order[%d].OrderID length = %d, want 32: %q", i, len(order.OrderID), order.OrderID)
 		}
-		if _, parseErr := strconv.ParseUint(order.OrderID, 10, 64); parseErr != nil {
-			t.Fatalf("order[%d].OrderID = %q, want numeric: %v", i, order.OrderID, parseErr)
+		parsedOrderID, parseErr := uuid.Parse(order.OrderID)
+		if parseErr != nil {
+			t.Fatalf("order[%d].OrderID = %q, want UUID: %v", i, order.OrderID, parseErr)
+		}
+		if parsedOrderID.Version() != 7 {
+			t.Fatalf("order[%d].OrderID version = %d, want 7", i, parsedOrderID.Version())
 		}
 		if orderIDs[i] != order.OrderID {
 			t.Fatalf("returned orderIDs[%d] = %q, want saved order ID %q", i, orderIDs[i], order.OrderID)

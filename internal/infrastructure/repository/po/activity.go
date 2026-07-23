@@ -49,7 +49,7 @@ type RaffleActivityAccount struct {
 	DayCountSurplus   int       `gorm:"column:day_count_surplus;not null;comment:日次数-剩余"`
 	MonthCount        int       `gorm:"column:month_count;not null;comment:月次数"`
 	MonthCountSurplus int       `gorm:"column:month_count_surplus;not null;comment:月次数-剩余"`
-	CurrentOrderID    string    `gorm:"column:current_order_id;type:varchar(12);not null;default:'';comment:当前已扣额度但尚未完成的抽奖订单"`
+	CurrentOrderID    string    `gorm:"column:current_order_id;type:varchar(32);not null;default:'';comment:当前已扣额度但尚未完成的抽奖订单"`
 	CreateTime        time.Time `gorm:"column:create_time;type:datetime;not null;autoCreateTime;comment:创建时间"`
 	UpdateTime        time.Time `gorm:"column:update_time;type:datetime;not null;autoUpdateTime;comment:更新时间"`
 }
@@ -61,7 +61,7 @@ type RaffleActivityOrder struct {
 	ActivityID    int64     `gorm:"column:activity_id;not null;comment:活动ID"`
 	ActivityName  string    `gorm:"column:activity_name;type:varchar(64);not null;comment:活动名称"`
 	StrategyID    int64     `gorm:"column:strategy_id;not null;comment:抽奖策略ID"`
-	OrderID       string    `gorm:"column:order_id;type:varchar(12);not null;comment:订单ID"`
+	OrderID       string    `gorm:"column:order_id;type:varchar(32);not null;comment:订单ID"`
 	OrderTime     time.Time `gorm:"column:order_time;type:datetime;not null;comment:下单时间"`
 	TotalCount    int       `gorm:"column:total_count;not null;comment:总次数"`
 	DayCount      int       `gorm:"column:day_count;not null;comment:日次数"`
@@ -128,7 +128,7 @@ type UserRaffleOrder struct {
 	ActivityID   int64      `gorm:"column:activity_id;not null;comment:活动ID"`
 	ActivityName string     `gorm:"column:activity_name;type:varchar(64);not null;comment:活动名称"`
 	StrategyID   int64      `gorm:"column:strategy_id;not null;comment:抽奖策略ID"`
-	OrderID      string     `gorm:"column:order_id;type:varchar(12);not null;comment:订单ID"`
+	OrderID      string     `gorm:"column:order_id;type:varchar(32);not null;comment:订单ID"`
 	RequestID    string     `gorm:"column:request_id;type:varchar(64);not null;comment:客户端请求幂等ID"`
 	OrderTime    time.Time  `gorm:"column:order_time;type:datetime;not null;comment:下单时间"`
 	OrderState   string     `gorm:"column:order_state;type:varchar(16);not null;default:create;comment:订单状态；create-创建、used-已使用、cancel-已作废"`

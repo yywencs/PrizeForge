@@ -17,7 +17,7 @@ type Task struct {
 	Topic string `gorm:"column:topic;type:varchar(32);not null;comment:消息主题"`
 
 	// MessageID 消息编号
-	MessageID string `gorm:"column:message_id;type:varchar(64);not null;comment:消息编号" json:"message_id"`
+	MessageID string `gorm:"column:message_id;type:varchar(128);not null;comment:消息编号" json:"message_id"`
 
 	// Message 消息主体
 	Message string `gorm:"column:message;type:varchar(512);not null;comment:消息主体"`

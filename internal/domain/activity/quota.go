@@ -2,8 +2,7 @@ package activity
 
 import (
 	"context"
-	"fmt"
-	"math/rand"
+	"prizeforge/pkg/idgen"
 	"prizeforge/pkg/logger"
 	"time"
 )
@@ -41,7 +40,10 @@ func (s *ActivityQuotaUsecase) CreateRaffleActivityOrder(ctx context.Context, sk
 
 	logger.Info("CreateRaffleActivityOrder", "activity", activity, "activityCount", activityCount)
 
-	quotaOrder := s.buildOrderAggregate(skuRecharge, activitySku, activity, activityCount)
+	quotaOrder, err := s.buildOrderAggregate(skuRecharge, activitySku, activity, activityCount)
+	if err != nil {
+		return "", err
+	}
 
 	err = s.repo.SaveOrder(ctx, quotaOrder)
 	if err != nil {
@@ -51,7 +53,11 @@ func (s *ActivityQuotaUsecase) CreateRaffleActivityOrder(ctx context.Context, sk
 	return quotaOrder.ActivityOrder.OrderID, nil
 }
 
-func (s *ActivityQuotaUsecase) buildOrderAggregate(skuRecharge *SkuRecharge, activitySku *ActivitySku, activity *Activity, activityCount *ActivityCount) *CreateQuotaOrder {
+func (s *ActivityQuotaUsecase) buildOrderAggregate(skuRecharge *SkuRecharge, activitySku *ActivitySku, activity *Activity, activityCount *ActivityCount) (*CreateQuotaOrder, error) {
+	orderID, err := idgen.NewOrderID()
+	if err != nil {
+		return nil, err
+	}
 	// 1. 构建订单对象
 	activityOrder := &ActivityOrder{
 		UserID:       skuRecharge.UserID,
@@ -60,7 +66,7 @@ func (s *ActivityQuotaUsecase) buildOrderAggregate(skuRecharge *SkuRecharge, act
 		ActivityName: activity.ActivityName,
 		StrategyID:   activity.StrategyID,
 
-		OrderID:       fmt.Sprintf("%012d", rand.New(rand.NewSource(time.Now().UnixNano())).Int63n(1000000000000)),
+		OrderID:       orderID,
 		OrderTime:     time.Now(),
 		TotalCount:    activityCount.TotalCount,
 		DayCount:      activityCount.DayCount,
@@ -77,7 +83,7 @@ func (s *ActivityQuotaUsecase) buildOrderAggregate(skuRecharge *SkuRecharge, act
 		DayCount:      activityCount.DayCount,
 		MonthCount:    activityCount.MonthCount,
 		ActivityOrder: activityOrder,
-	}
+	}, nil
 }
 
 func (s *ActivityQuotaUsecase) ClearActivitySkuStock(ctx context.Context, sku int64) error {

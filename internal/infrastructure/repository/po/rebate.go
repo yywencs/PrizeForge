@@ -32,7 +32,7 @@ func (p *DailyBehaviorRebate) ToEntity() *rebate.DailyBehaviorRebate {
 type UserBehaviorRebateOrder struct {
 	ID            int64     `gorm:"column:id;primaryKey;autoIncrement"`
 	UserID        string    `gorm:"column:user_id"`
-	OrderID       string    `gorm:"column:order_id"`
+	OrderID       string    `gorm:"column:order_id;type:varchar(32);not null"`
 	BehaviorType  string    `gorm:"column:behavior_type"`
 	OutBusinessNo string    `gorm:"column:out_business_no"`
 	RebateDesc    string    `gorm:"column:rebate_desc"`

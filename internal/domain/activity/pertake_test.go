@@ -3,9 +3,10 @@ package activity
 import (
 	"context"
 	"errors"
-	"strconv"
 	"testing"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 type fakePartakeRepository struct {
@@ -175,7 +176,7 @@ func TestActivityPartakeUsecaseCreateOrderChecksActivity(t *testing.T) {
 }
 
 // TestActivityPartakeUsecaseCreateOrderBuildsOrder 验证有效请求会构造包含正确用户、活动、
-// 策略、请求时间和初始状态的 12 位订单，并返回仓储确认后的标准订单。
+// 策略、请求时间和初始状态的 UUIDv7 订单，并返回仓储确认后的标准订单。
 func TestActivityPartakeUsecaseCreateOrderBuildsOrder(t *testing.T) {
 	fixedNow := time.Date(2026, time.July, 20, 12, 0, 0, 0, time.UTC)
 	activity := &Activity{
@@ -238,11 +239,15 @@ func TestActivityPartakeUsecaseCreateOrderBuildsOrder(t *testing.T) {
 	if capturedOrder.OrderState != UserRaffleOrderStateCreate || capturedOrder.DrawState != DrawStateCreated {
 		t.Fatalf("created order states = (%q, %q), want (%q, %q)", capturedOrder.OrderState, capturedOrder.DrawState, UserRaffleOrderStateCreate, DrawStateCreated)
 	}
-	if len(capturedOrder.OrderID) != 12 {
-		t.Fatalf("created order ID = %q, want 12 digits", capturedOrder.OrderID)
+	if len(capturedOrder.OrderID) != 32 {
+		t.Fatalf("created order ID length = %d, want 32: %q", len(capturedOrder.OrderID), capturedOrder.OrderID)
 	}
-	if _, err := strconv.ParseUint(capturedOrder.OrderID, 10, 64); err != nil {
-		t.Fatalf("created order ID = %q, want decimal digits: %v", capturedOrder.OrderID, err)
+	parsedOrderID, err := uuid.Parse(capturedOrder.OrderID)
+	if err != nil {
+		t.Fatalf("created order ID = %q, want UUID: %v", capturedOrder.OrderID, err)
+	}
+	if parsedOrderID.Version() != 7 {
+		t.Fatalf("created order ID version = %d, want 7", parsedOrderID.Version())
 	}
 }
 

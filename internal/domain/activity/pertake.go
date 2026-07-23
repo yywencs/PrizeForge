@@ -3,9 +3,8 @@ package activity
 import (
 	"context"
 	"errors"
-	"fmt"
-	"math/rand"
 	"prizeforge/internal/metrics"
+	"prizeforge/pkg/idgen"
 	"time"
 )
 
@@ -54,7 +53,10 @@ func (s *ActivityPartakeUsecase) CreateOrder(ctx context.Context, partake *Parta
 		return nil, ErrActivityTimeError
 	}
 
-	newOrder := s.buildUserRaffleOrder(userID, requestID, activity, currentTime)
+	newOrder, err := s.buildUserRaffleOrder(userID, requestID, activity, currentTime)
+	if err != nil {
+		return nil, err
+	}
 	userRaffleOrder, publication, reused, err := s.repo.CreateOrLoadUserRaffleOrder(ctx, newOrder)
 	if err != nil {
 		return nil, err
@@ -111,16 +113,20 @@ func quotaCheckResultFromErr(err error) string {
 	}
 }
 
-func (s *ActivityPartakeUsecase) buildUserRaffleOrder(userID string, requestID string, activity *Activity, currentTime time.Time) *UserRaffleOrder {
+func (s *ActivityPartakeUsecase) buildUserRaffleOrder(userID string, requestID string, activity *Activity, currentTime time.Time) (*UserRaffleOrder, error) {
+	orderID, err := idgen.NewOrderID()
+	if err != nil {
+		return nil, err
+	}
 	userRaffleOrder := &UserRaffleOrder{}
 	userRaffleOrder.UserID = userID
 	userRaffleOrder.ActivityID = activity.ActivityID
 	userRaffleOrder.ActivityName = activity.ActivityName
 	userRaffleOrder.StrategyID = activity.StrategyID
-	userRaffleOrder.OrderID = fmt.Sprintf("%012d", rand.New(rand.NewSource(time.Now().UnixNano())).Int63n(1000000000000))
+	userRaffleOrder.OrderID = orderID
 	userRaffleOrder.RequestID = requestID
 	userRaffleOrder.OrderTime = currentTime
 	userRaffleOrder.OrderState = UserRaffleOrderStateCreate
 	userRaffleOrder.DrawState = DrawStateCreated
-	return userRaffleOrder
+	return userRaffleOrder, nil
 }

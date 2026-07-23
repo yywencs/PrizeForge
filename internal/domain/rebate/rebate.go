@@ -3,7 +3,7 @@ package rebate
 import (
 	"context"
 	"fmt"
-	"prizeforge/pkg/xrand"
+	"prizeforge/pkg/idgen"
 )
 
 type BehaviorRebateUsecase struct {
@@ -36,8 +36,10 @@ func (s *BehaviorRebateUsecase) CreateOrder(ctx context.Context, behavior *Behav
 	orders := make([]*BehaviorRebateOrder, 0, len(rebateConfigs))
 
 	for _, config := range rebateConfigs {
-		// Generate Order ID
-		orderId := xrand.RandomNumeric(12)
+		orderID, err := idgen.NewOrderID()
+		if err != nil {
+			return nil, err
+		}
 
 		// Construct unique BizID for this specific rebate order
 		// e.g. OutBusinessNo_RebateType_RebateConfig
@@ -45,7 +47,7 @@ func (s *BehaviorRebateUsecase) CreateOrder(ctx context.Context, behavior *Behav
 
 		order := &BehaviorRebateOrder{
 			UserID:        behavior.UserID,
-			OrderID:       orderId,
+			OrderID:       orderID,
 			BehaviorType:  config.BehaviorType,
 			RebateDesc:    config.RebateDesc,
 			RebateType:    config.RebateType,
@@ -54,7 +56,7 @@ func (s *BehaviorRebateUsecase) CreateOrder(ctx context.Context, behavior *Behav
 			BizID:         bizId,
 		}
 		orders = append(orders, order)
-		orderIDs = append(orderIDs, orderId)
+		orderIDs = append(orderIDs, orderID)
 	}
 	agg.BehaviorRebateOrders = orders
 

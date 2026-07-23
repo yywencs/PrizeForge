@@ -325,7 +325,7 @@ DROP TABLE IF EXISTS `strategy_award_stock_reservation`;
 CREATE TABLE `strategy_award_stock_reservation` (
   `id` bigint unsigned NOT NULL AUTO_INCREMENT,
   `user_id` varchar(32) NOT NULL COMMENT '用户ID',
-  `order_id` varchar(12) NOT NULL COMMENT '抽奖订单ID',
+  `order_id` varchar(32) NOT NULL COMMENT '抽奖订单ID',
   `strategy_id` bigint NOT NULL COMMENT '策略ID',
   `award_id` bigint NOT NULL COMMENT '奖品ID',
   `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,

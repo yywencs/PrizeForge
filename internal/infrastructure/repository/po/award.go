@@ -20,7 +20,7 @@ type UserAwardRecord struct {
 	StrategyID int64 `gorm:"column:strategy_id;not null;index;comment:抽奖策略ID"`
 
 	// OrderID 抽奖订单ID【作为幂等使用】
-	OrderID string `gorm:"column:order_id;type:varchar(12);not null;unique;comment:抽奖订单ID【作为幂等使用】"`
+	OrderID string `gorm:"column:order_id;type:varchar(32);not null;unique;comment:抽奖订单ID【作为幂等使用】"`
 
 	// AwardID 奖品ID
 	AwardID int64 `gorm:"column:award_id;not null;comment:奖品ID"`

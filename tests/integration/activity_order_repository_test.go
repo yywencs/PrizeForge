@@ -13,6 +13,7 @@ import (
 	"prizeforge/internal/infrastructure/adapter"
 	"prizeforge/internal/infrastructure/repository/activityrepo"
 	"prizeforge/internal/infrastructure/repository/po"
+	"prizeforge/pkg/idgen"
 	"prizeforge/pkg/xrand"
 
 	"gorm.io/gorm"
@@ -33,7 +34,9 @@ type activityOrderFixture struct {
 
 func newActivityOrderFixture(t *testing.T, totalSurplus, daySurplus, monthSurplus int) *activityOrderFixture {
 	t.Helper()
-	userID := "it-order-" + xrand.RandomNumeric(12)
+	// 使用允许的最长用户 ID，配合 32 位 UUID 订单号验证 Outbox message_id
+	// 不会再受旧 varchar(64) 字段限制。
+	userID := "it-order-" + xrand.RandomNumeric(23)
 	db, suffix := integrationDBRouter.DBStrategy(userID)
 	fixture := &activityOrderFixture{
 		db: db, userID: userID,
@@ -226,8 +229,12 @@ func TestActivityRepositoryPersistsCompleteDrawTransactionIdempotently(t *testin
 	repo := fixture.repository()
 	requestID := "request-" + xrand.RandomNumeric(12)
 	trackIntegrationRedisKeys(t, adapter.GetDrawRequestResultKey(integrationOrderActivityID, fixture.userID, requestID))
+	orderID, err := idgen.NewOrderID()
+	if err != nil {
+		t.Fatalf("NewOrderID() error = %v", err)
+	}
 	order, _, _, err := repo.CreateOrLoadUserRaffleOrder(
-		context.Background(), fixture.order(xrand.RandomNumeric(12), requestID),
+		context.Background(), fixture.order(orderID, requestID),
 	)
 	if err != nil {
 		t.Fatalf("CreateOrLoadUserRaffleOrder() error = %v", err)

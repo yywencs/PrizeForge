@@ -34,7 +34,7 @@ USE `prizeforge_01`;
 CREATE TABLE IF NOT EXISTS `user_behavior_rebate_order_000` (
   `id` bigint unsigned NOT NULL AUTO_INCREMENT,
   `user_id` varchar(32) NOT NULL,
-  `order_id` varchar(12) NOT NULL,
+  `order_id` varchar(32) NOT NULL,
   `behavior_type` varchar(32) NOT NULL,
   `out_business_no` varchar(64) NOT NULL,
   `rebate_desc` varchar(128) NOT NULL,
