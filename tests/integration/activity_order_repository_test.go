@@ -4,6 +4,7 @@ package integration
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
@@ -257,6 +258,56 @@ func TestActivityRepositoryPersistsCompleteDrawTransactionIdempotently(t *testin
 	if err != nil || exists != 0 {
 		t.Fatalf("pending reservation exists=%d err=%v, want deleted", exists, err)
 	}
+}
+
+// TestActivityRepositoryKeepsNewPendingOrderWhenOldResultIsRedelivered 验证旧抽奖结果
+// 已经落库后再次投递时，即使该用户已经创建了更新的 pending 订单，也会幂等成功并保留新订单。
+func TestActivityRepositoryKeepsNewPendingOrderWhenOldResultIsRedelivered(t *testing.T) {
+	fixture := newActivityOrderFixture(t, 3, 3, 3)
+	repo := fixture.repository()
+	firstRequestID := "request-" + xrand.RandomNumeric(12)
+	firstOrder, _, _, err := repo.CreateOrLoadUserRaffleOrder(
+		context.Background(), fixture.order(xrand.RandomNumeric(12), firstRequestID),
+	)
+	if err != nil {
+		t.Fatalf("create first order: %v", err)
+	}
+	firstResult := fixture.drawResult(firstOrder)
+	if err := repo.SaveDrawResult(context.Background(), firstResult); err != nil {
+		t.Fatalf("persist first result: %v", err)
+	}
+
+	secondRequestID := "request-" + xrand.RandomNumeric(12)
+	secondOrder, _, _, err := repo.CreateOrLoadUserRaffleOrder(
+		context.Background(), fixture.order(xrand.RandomNumeric(12), secondRequestID),
+	)
+	if err != nil {
+		t.Fatalf("create second order: %v", err)
+	}
+
+	if err := repo.SaveDrawResult(context.Background(), firstResult); err != nil {
+		t.Fatalf("redeliver first result: %v", err)
+	}
+
+	pendingJSON, err := integrationRedisClient.Get(
+		context.Background(),
+		adapter.GetPendingRaffleOrderKey(integrationOrderActivityID, fixture.userID),
+	).Result()
+	if err != nil {
+		t.Fatalf("load second pending order: %v", err)
+	}
+	var pending struct {
+		OrderID   string `json:"order_id"`
+		RequestID string `json:"request_id"`
+	}
+	if err := json.Unmarshal([]byte(pendingJSON), &pending); err != nil {
+		t.Fatalf("decode second pending order: %v", err)
+	}
+	if pending.OrderID != secondOrder.OrderID || pending.RequestID != secondRequestID {
+		t.Fatalf("pending order = (%q,%q), want (%q,%q)",
+			pending.OrderID, pending.RequestID, secondOrder.OrderID, secondRequestID)
+	}
+	assertActivityOrderCount(t, fixture, 1)
 }
 
 func TestActivityRepositoryRollsBackCompleteDrawWhenMySQLQuotaIsExhausted(t *testing.T) {

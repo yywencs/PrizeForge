@@ -3,12 +3,15 @@ package listener
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"prizeforge/internal/domain/activity"
 	"prizeforge/pkg/logger"
 
 	amqp "github.com/rabbitmq/amqp091-go"
 )
+
+const defaultMessageHandleTimeout = 30 * time.Second
 
 // Listener 是 RabbitMQ 消息处理器的统一接口。
 //
@@ -34,9 +37,10 @@ type Listener interface {
 //	go consumer.Start(ctx)
 //	defer consumer.Shutdown()
 type RabbitMQConsumer struct {
-	conn      *amqp.Connection    // RabbitMQ 连接（复用自 bootstrap 创建的连接）
-	listeners map[string]Listener // topic → Listener 映射
-	channels  []*amqp.Channel     // 所有打开的 channel，Shutdown 时逐个关闭
+	conn          *amqp.Connection    // RabbitMQ 连接（复用自 bootstrap 创建的连接）
+	listeners     map[string]Listener // topic → Listener 映射
+	channels      []*amqp.Channel     // 所有打开的 channel，Shutdown 时逐个关闭
+	handleTimeout time.Duration       // 单条消息处理上限，防止一个调用永久占住消费者
 }
 
 // NewRabbitMQConsumer 创建 RabbitMQConsumer 并注册 Activity 领域的三个基础 topic。
@@ -53,8 +57,9 @@ func NewRabbitMQConsumer(
 	drawResultListener *DrawResultListener,
 ) *RabbitMQConsumer {
 	c := &RabbitMQConsumer{
-		conn:      conn,
-		listeners: make(map[string]Listener),
+		conn:          conn,
+		listeners:     make(map[string]Listener),
+		handleTimeout: defaultMessageHandleTimeout,
 	}
 
 	if stockListener != nil {
@@ -188,11 +193,13 @@ func (c *RabbitMQConsumer) handle(msgs <-chan amqp.Delivery, l Listener) {
 				}
 			}()
 
-			retry, err := l.Handle(context.Background(), d.Body)
+			handleCtx, cancel := context.WithTimeout(context.Background(), c.messageHandleTimeout())
+			defer cancel()
+
+			retry, err := l.Handle(handleCtx, d.Body)
 			if err != nil {
 				logger.Error("消息处理失败", "err", err)
 				if retry {
-					logger.Warn("消息重回队列等待重试")
 					_ = d.Nack(false, true) // requeue=true，放回队列尾部
 				} else {
 					logger.Error("永久性错误，丢弃消息", "err", err)
@@ -204,4 +211,11 @@ func (c *RabbitMQConsumer) handle(msgs <-chan amqp.Delivery, l Listener) {
 			_ = d.Ack(false) // 确认消费成功
 		}()
 	}
+}
+
+func (c *RabbitMQConsumer) messageHandleTimeout() time.Duration {
+	if c.handleTimeout > 0 {
+		return c.handleTimeout
+	}
+	return defaultMessageHandleTimeout
 }

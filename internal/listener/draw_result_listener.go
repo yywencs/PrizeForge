@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"prizeforge/internal/domain/activity"
-	"prizeforge/pkg/logger"
 	"prizeforge/pkg/rabbitmq"
 )
 
@@ -45,9 +44,7 @@ func (l *DrawResultListener) Handle(ctx context.Context, body []byte) (retry boo
 		return false, fmt.Errorf("抽奖结果消息ID与载荷不一致")
 	}
 	if err := l.partakeSvc.SaveDrawResult(ctx, &result); err != nil {
-		logger.Error("DrawResultListener 持久化失败", "orderID", result.OrderID, "err", err)
 		return true, err
 	}
-	logger.Info("DrawResultListener 处理成功", "userID", result.UserID, "orderID", result.OrderID)
 	return false, nil
 }

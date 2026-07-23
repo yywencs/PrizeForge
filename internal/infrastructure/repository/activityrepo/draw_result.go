@@ -353,8 +353,18 @@ func (r *Repository) clearPersistedPendingDraw(ctx context.Context, result *acti
 		return err
 	}
 	status, ok := raw.(int64)
-	if !ok || status < 0 {
+	if !ok {
 		return fmt.Errorf("clear persisted pending draw failed: status=%v", raw)
 	}
-	return nil
+	switch status {
+	case 0, 1:
+		// pending 已不存在，或者仍属于当前结果并已被删除。
+		return nil
+	case -1:
+		// 当前 key 已属于该用户更新的抽奖订单。旧结果已经在 MySQL 幂等落库，
+		// 这里必须保留新订单并确认旧消息，不能让旧消息无限 Nack 重试。
+		return nil
+	default:
+		return fmt.Errorf("clear persisted pending draw failed: status=%d", status)
+	}
 }

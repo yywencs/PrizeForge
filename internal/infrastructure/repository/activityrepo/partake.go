@@ -411,11 +411,13 @@ func (r *Repository) SaveDrawResult(ctx context.Context, result *activity.DrawRe
 		return txnErr
 	}
 
-	if err := r.clearPersistedPendingDraw(context.WithoutCancel(ctx), result); err != nil {
+	// MySQL 已提交但 Redis 清理失败时返回错误，让 RabbitMQ 依靠数据库幂等记录重试。
+	// 必须沿用消费上下文，避免 Redis 异常时一条消息永久占住消费者。
+	if err := r.clearPersistedPendingDraw(ctx, result); err != nil {
 		return fmt.Errorf("clear persisted Redis draw: %w", err)
 	}
 	accountKey := adapter.GetActivityAccountKey(result.ActivityID, result.UserID)
-	_ = r.redis.Delete(context.WithoutCancel(ctx), accountKey)
+	_ = r.redis.Delete(ctx, accountKey)
 	return nil
 }
 

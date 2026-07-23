@@ -3,6 +3,7 @@ package listener
 import (
 	"context"
 	"testing"
+	"time"
 
 	amqp "github.com/rabbitmq/amqp091-go"
 )
@@ -38,6 +39,13 @@ type panicListener struct{}
 
 func (panicListener) Handle(context.Context, []byte) (bool, error) {
 	panic("listener test panic")
+}
+
+type contextTimeoutListener struct{}
+
+func (contextTimeoutListener) Handle(ctx context.Context, _ []byte) (bool, error) {
+	<-ctx.Done()
+	return true, ctx.Err()
 }
 
 // TestRabbitMQConsumerRejectsMalformedMessageWithoutRequeue 验证非法消息会被视为永久错误并直接丢弃，不会 Ack 或重新入队。
@@ -93,5 +101,31 @@ func TestRabbitMQConsumerRequeuesMessageAfterListenerPanic(t *testing.T) {
 	}
 	if got := acknowledger.nacks[0]; got.tag != 42 || got.multiple || !got.requeue {
 		t.Fatalf("Nack() = %+v, want tag=42 multiple=false requeue=true", got)
+	}
+}
+
+// TestRabbitMQConsumerTimesOutAndRequeuesStuckMessage 验证单条消息处理超过上限后，
+// Consumer 会取消处理上下文并将消息重新入队，而不是永久占住唯一的 unacked 配额。
+func TestRabbitMQConsumerTimesOutAndRequeuesStuckMessage(t *testing.T) {
+	acknowledger := &recordingAcknowledger{}
+	messages := make(chan amqp.Delivery, 1)
+	messages <- amqp.Delivery{
+		Acknowledger: acknowledger,
+		DeliveryTag:  43,
+		Body:         []byte(`{"data":"ignored"}`),
+	}
+	close(messages)
+
+	consumer := &RabbitMQConsumer{handleTimeout: 10 * time.Millisecond}
+	consumer.handle(messages, contextTimeoutListener{})
+
+	if len(acknowledger.acks) != 0 || len(acknowledger.rejects) != 0 {
+		t.Fatalf("Ack/Reject calls = %d/%d, want 0/0", len(acknowledger.acks), len(acknowledger.rejects))
+	}
+	if len(acknowledger.nacks) != 1 {
+		t.Fatalf("Nack() calls = %d, want 1", len(acknowledger.nacks))
+	}
+	if got := acknowledger.nacks[0]; got.tag != 43 || got.multiple || !got.requeue {
+		t.Fatalf("Nack() = %+v, want tag=43 multiple=false requeue=true", got)
 	}
 }

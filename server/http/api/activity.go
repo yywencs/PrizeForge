@@ -40,16 +40,17 @@ func (s *Server) Draw(c *gin.Context) {
 
 	awardID, awardTitle, awardIndex, err := s.activityUsecase.Draw(c.Request.Context(), req.UserID, req.ActivityID, req.RequestID)
 	if err != nil {
-		logger.Error("draw failed", "userID", req.UserID, "activityID", req.ActivityID, "error", err)
 		if errors.Is(err, activity.ErrDrawInProgress) || errors.Is(err, activity.ErrDrawCancelled) {
+			logger.Debug("draw rejected", "userID", req.UserID, "activityID", req.ActivityID, "error", err)
 			common.Error(c, 409, err.Error())
 			return
 		}
+		logger.Error("draw failed", "userID", req.UserID, "activityID", req.ActivityID, "error", err)
 		common.Error(c, 500, err.Error())
 		return
 	}
 
-	logger.Info("draw success", "userID", req.UserID, "activityID", req.ActivityID, "awardID", awardID)
+	logger.Debug("draw success", "userID", req.UserID, "activityID", req.ActivityID, "awardID", awardID)
 	common.Success(c, RaffleResponse{
 		AwardID:    awardID,
 		AwardTitle: awardTitle,
