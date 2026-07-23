@@ -1,10 +1,15 @@
 package main
 
 import (
+	"context"
 	"io"
 	"strings"
 	"testing"
 	"time"
+
+	"prizeforge/internal/infrastructure/adapter"
+
+	redis "github.com/redis/go-redis/v9"
 )
 
 // TestParsePrepareConfig 验证 prepare 参数能够从环境变量和命令行组合成完整配置。
@@ -59,5 +64,60 @@ func TestBenchmarkShardIndexDistributesUsersAcrossConfiguredDatabases(t *testing
 func TestRepeatedValues(t *testing.T) {
 	if got, want := repeatedValues(3, "(?, ?)"), "(?, ?),(?, ?),(?, ?)"; got != want {
 		t.Fatalf("repeatedValues() = %q, want %q", got, want)
+	}
+}
+
+type recordingBenchmarkQuotaPipeline struct {
+	deleted []string
+	values  map[string]interface{}
+	ttls    map[string]time.Duration
+}
+
+func (p *recordingBenchmarkQuotaPipeline) Del(ctx context.Context, keys ...string) *redis.IntCmd {
+	p.deleted = append(p.deleted, keys...)
+	return redis.NewIntCmd(ctx)
+}
+
+func (p *recordingBenchmarkQuotaPipeline) Set(ctx context.Context, key string, value interface{}, expiration time.Duration) *redis.StatusCmd {
+	if p.values == nil {
+		p.values = make(map[string]interface{})
+		p.ttls = make(map[string]time.Duration)
+	}
+	p.values[key] = value
+	p.ttls[key] = expiration
+	return redis.NewStatusCmd(ctx)
+}
+
+func TestQueueBenchmarkQuotaPreheatUsesProductionQuotaKeys(t *testing.T) {
+	const (
+		activityID = int64(100301)
+		userID     = "benchmark-user-000001"
+		quota      = 20
+	)
+	currentTime := time.Date(2026, 7, 23, 12, 0, 0, 0, time.Local)
+	pipe := &recordingBenchmarkQuotaPipeline{}
+
+	queueBenchmarkQuotaPreheat(context.Background(), pipe, activityID, userID, quota, currentTime)
+
+	if len(pipe.deleted) != 2 ||
+		pipe.deleted[0] != adapter.GetActivityAccountKey(activityID, userID) ||
+		pipe.deleted[1] != adapter.GetPendingRaffleOrderKey(activityID, userID) {
+		t.Fatalf("deleted keys = %#v, want account snapshot and pending order", pipe.deleted)
+	}
+	wantKeys := []string{
+		adapter.GetActivityAccountTotalSurplusKey(activityID, userID),
+		adapter.GetActivityAccountMonthSurplusKey(activityID, userID, "2026-07"),
+		adapter.GetActivityAccountDaySurplusKey(activityID, userID, "2026-07-23"),
+	}
+	for _, key := range wantKeys {
+		if pipe.values[key] != quota {
+			t.Fatalf("quota key %q value = %#v, want %d", key, pipe.values[key], quota)
+		}
+		if pipe.ttls[key] != 0 {
+			t.Fatalf("quota key %q TTL = %s, want no expiration", key, pipe.ttls[key])
+		}
+	}
+	if len(pipe.values) != len(wantKeys) {
+		t.Fatalf("preheated quota keys = %#v, want exactly %d keys", pipe.values, len(wantKeys))
 	}
 }

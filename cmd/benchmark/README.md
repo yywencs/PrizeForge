@@ -80,7 +80,9 @@ docker run --rm \
   --user-prefix benchmark-0721
 ```
 
-生成的用户 ID 格式为 `benchmark-0721-000001`。`prepare` 可以重复执行，但不会删除已经产生的订单、中奖记录和任务数据。
+生成的用户 ID 格式为 `benchmark-0721-000001`。`prepare` 在提交 MySQL 总/月/日额度后，
+会使用线上抽奖相同的 Redis key 预热三种剩余额度，因此正式压测的第一次抽奖不会再回源 MySQL。
+`prepare` 可以重复执行，但不会删除已经产生的订单、中奖记录和任务数据。
 
 ## 运行压测
 

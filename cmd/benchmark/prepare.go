@@ -77,6 +77,7 @@ func runPrepareCommand(args []string, stdout, stderr io.Writer) error {
 	} else {
 		fmt.Fprintln(stdout, "  armory:          ready")
 	}
+	fmt.Fprintln(stdout, "  quota cache:     ready")
 	return nil
 }
 
@@ -174,6 +175,8 @@ func prepareBenchmarkData(ctx context.Context, config prepareConfig) (prepareRep
 		usersByShard[shardIndex] = append(usersByShard[shardIndex], userID)
 	}
 
+	// 整次 prepare 固定在同一个额度周期，避免跨日或跨月时 MySQL 与 Redis 使用不同的 key。
+	quotaPeriod := time.Now()
 	shardCounts := make([]int, config.DBCount)
 	for shardIndex, users := range usersByShard {
 		databaseSuffix := fmt.Sprintf("_%02d", shardIndex+1)
@@ -181,7 +184,7 @@ func prepareBenchmarkData(ctx context.Context, config prepareConfig) (prepareRep
 		if openErr != nil {
 			return prepareReport{}, fmt.Errorf("连接分库 %s: %w", databaseSuffix, openErr)
 		}
-		seedErr := seedActivityAccounts(ctx, database, users, config)
+		seedErr := seedActivityAccounts(ctx, database, users, config, quotaPeriod)
 		closeErr := database.Close()
 		if seedErr != nil {
 			return prepareReport{}, fmt.Errorf("准备分库 %s 用户额度: %w", databaseSuffix, seedErr)
@@ -201,7 +204,7 @@ func prepareBenchmarkData(ctx context.Context, config prepareConfig) (prepareRep
 	if err := redisClient.Ping(ctx).Err(); err != nil {
 		return prepareReport{}, fmt.Errorf("连接 Redis: %w", err)
 	}
-	if err := resetBenchmarkRedis(ctx, redisClient, config, strategyID, awardIDs, awardStock); err != nil {
+	if err := resetAndPreheatBenchmarkRedis(ctx, redisClient, config, strategyID, awardIDs, awardStock, quotaPeriod); err != nil {
 		return prepareReport{}, err
 	}
 
@@ -299,7 +302,7 @@ func prepareActivityAndAwards(ctx context.Context, database *sql.DB, config prep
 	return strategyID, awardIDs, awardStock, nil
 }
 
-func seedActivityAccounts(ctx context.Context, database *sql.DB, users []string, config prepareConfig) error {
+func seedActivityAccounts(ctx context.Context, database *sql.DB, users []string, config prepareConfig, quotaPeriod time.Time) error {
 	if len(users) == 0 {
 		return nil
 	}
@@ -309,8 +312,8 @@ func seedActivityAccounts(ctx context.Context, database *sql.DB, users []string,
 	}
 	defer transaction.Rollback()
 
-	day := time.Now().Format("2006-01-02")
-	month := time.Now().Format("2006-01")
+	day := quotaPeriod.Format("2006-01-02")
+	month := quotaPeriod.Format("2006-01")
 	for start := 0; start < len(users); start += config.BatchSize {
 		end := min(start+config.BatchSize, len(users))
 		batch := users[start:end]
@@ -380,13 +383,14 @@ func upsertMonthAccounts(ctx context.Context, transaction *sql.Tx, users []strin
 	return nil
 }
 
-func resetBenchmarkRedis(
+func resetAndPreheatBenchmarkRedis(
 	ctx context.Context,
 	client *redis.Client,
 	config prepareConfig,
 	strategyID int64,
 	awardIDs []int64,
 	awardStock int64,
+	quotaPeriod time.Time,
 ) error {
 	fixedKeys := []string{
 		adapter.GetActivityKey(config.ActivityID),
@@ -423,26 +427,42 @@ func resetBenchmarkRedis(
 		return fmt.Errorf("设置 Redis 奖品库存: %w", err)
 	}
 
-	day := time.Now().Format("2006-01-02")
-	month := time.Now().Format("2006-01")
 	for start := 1; start <= config.Users; start += config.BatchSize {
 		end := min(start+config.BatchSize-1, config.Users)
 		pipe = client.Pipeline()
 		for index := start; index <= end; index++ {
 			userID := benchmarkUserID(config.UserPrefix, index)
-			pipe.Del(ctx,
-				adapter.GetActivityAccountKey(config.ActivityID, userID),
-				adapter.GetActivityAccountTotalSurplusKey(config.ActivityID, userID),
-				adapter.GetActivityAccountDaySurplusKey(config.ActivityID, userID, day),
-				adapter.GetActivityAccountMonthSurplusKey(config.ActivityID, userID, month),
-				adapter.GetPendingRaffleOrderKey(config.ActivityID, userID),
-			)
+			queueBenchmarkQuotaPreheat(ctx, pipe, config.ActivityID, userID, config.Quota, quotaPeriod)
 		}
 		if _, err := pipe.Exec(ctx); err != nil {
-			return fmt.Errorf("清理用户额度缓存: %w", err)
+			return fmt.Errorf("预热用户额度缓存: %w", err)
 		}
 	}
 	return nil
+}
+
+type benchmarkQuotaPipeline interface {
+	Del(ctx context.Context, keys ...string) *redis.IntCmd
+	Set(ctx context.Context, key string, value interface{}, expiration time.Duration) *redis.StatusCmd
+}
+
+// queueBenchmarkQuotaPreheat 将刚刚提交到 MySQL 的压测额度快照镜像到 Redis。
+// 三个额度键与线上抽奖 Lua 使用相同的 key，并保持无过期时间。
+func queueBenchmarkQuotaPreheat(
+	ctx context.Context,
+	pipe benchmarkQuotaPipeline,
+	activityID int64,
+	userID string,
+	quota int,
+	currentTime time.Time,
+) {
+	pipe.Del(ctx,
+		adapter.GetActivityAccountKey(activityID, userID),
+		adapter.GetPendingRaffleOrderKey(activityID, userID),
+	)
+	pipe.Set(ctx, adapter.GetActivityAccountTotalSurplusKey(activityID, userID), quota, 0)
+	pipe.Set(ctx, adapter.GetActivityAccountMonthSurplusKey(activityID, userID, currentTime.Format("2006-01")), quota, 0)
+	pipe.Set(ctx, adapter.GetActivityAccountDaySurplusKey(activityID, userID, currentTime.Format("2006-01-02")), quota, 0)
 }
 
 func deleteRedisPattern(ctx context.Context, client *redis.Client, pattern string) error {
