@@ -1,133 +1,77 @@
 # PrizeForge
 
-PrizeForge 是一个基于 Go Gin 的营销抽奖与奖励发放系统。面向用户促活、签到返利、活动抽奖等场景，覆盖活动装配、资格校验、额度扣减、抽奖决策、库存扣减、中奖记录、异步发奖和监控告警等后端链路。
+PrizeForge 是一个使用 Go 实现的营销抽奖与奖励发放系统，覆盖活动额度、抽奖策略、库存预占、结果落库、异步发奖和失败补偿等完整链路。
 
-重点解决：
+项目重点不在接口数量，而在高并发场景下的原子性、幂等性、最终一致性和可观测性实践。
 
-- 用户活动额度和 SKU 库存的原子扣减（Redis Lua）
-- 抽奖策略、权重规则、规则树和兜底奖品的动态组合（责任链 + 决策树）
-- 分库分表后的用户订单、中奖记录和活动账户读写
-- RabbitMQ 与 Asynq 驱动的异步结算和失败重试
-- Prometheus / Grafana 对接口、业务、队列和数据库连接池的观测
-- Viper 本地配置热更新
+## 核心特性
 
-## 架构图
+- **Redis-first 抽奖链路**：使用 Lua 原子校验并扣减用户额度，保存 pending 订单与抽奖结果。
+- **可组合抽奖策略**：支持概率抽奖、权重规则、责任链、规则树和兜底奖品。
+- **可靠异步落库**：Redis Stream 负责恢复依据，RabbitMQ 使用持久化消息、mandatory 路由检查和 Publisher Confirm。
+- **幂等与最终一致性**：MySQL 唯一约束、Outbox、手动 ACK/Nack 和补偿任务共同避免重复订单与消息丢失。
+- **分库分表**：用户订单、活动账户和中奖记录按用户维度路由。
+- **工程化保障**：提供单元测试、真实依赖集成测试、CI、镜像发布、生产部署和回滚脚本。
 
-```mermaid
-flowchart TD
-    User(["用户端"]) & Admin(["运营后台"]) --> HTTP["Gin API<br/>:8080 / :8081"]
-
-    HTTP --> App["Application 编排层"]
-
-    App --> Activity["Activity<br/>活动·额度·抽奖"]
-    App --> Strategy["Strategy<br/>权重·规则决策"]
-    App --> Award["Award<br/>中奖·发奖"]
-    App --> Rebate["Rebate<br/>签到返利"]
-
-    Activity -- "额度/库存扣减" --> Redis[("Redis")]
-    Strategy -- "策略/库存预热" --> Redis
-
-    Activity -- "库存归零/发奖事件" --> RabbitMQ[("RabbitMQ")]
-    RabbitMQ -- "消费" --> Award
-
-    Award -- "延迟重试/状态推进" --> Asynq[("Asynq")]
-    Asynq -- "task 表" --> MySQL[("MySQL 分库分表")]
-
-    Activity & Strategy & Award & Rebate --> MySQL
-```
-
-## 核心链路
+## 架构
 
 ```mermaid
-sequenceDiagram
-    participant C as Client
-    participant S as API Handler
-    participant A as Activity Domain
-    participant R as Redis
-    participant ST as Strategy Domain
-    participant DB as MySQL
-    participant MQ as RabbitMQ/Asynq
+flowchart LR
+    Client["Client"] --> API["Gin API"]
+    Admin["Admin API"] --> MySQL[("MySQL")]
+    Admin --> Redis[("Redis")]
 
-    C->>S: Draw(user_id, activity_id, request_id)
-    S->>A: 创建或复用抽奖订单
-    A->>DB: 事务扣减总/月/日额度并创建订单
-    A->>DB: CAS 抢占 created → processing
-    S->>ST: 执行抽奖策略
-    ST->>R: 命中预热策略和库存缓存
-    ST->>ST: 前置规则链 + 概率区间 + 后置规则树
-    ST->>R: 按 user_id + order_id 幂等预占奖品库存
-    S->>DB: 事务保存中奖记录、发奖/库存 task、订单 success
-    DB->>MQ: task 扫描器异步投递发奖 / 同步库存
-    MQ-->>DB: 异步更新状态或重试失败任务
-    S-->>C: award_id / award_title
+    API --> Strategy["Strategy Engine"]
+    Strategy --> Redis
+    API -->|"Lua: quota + pending + result"| Redis
+    API -->|"persistent message + confirm"| RabbitMQ[("RabbitMQ")]
+
+    RabbitMQ --> DrawConsumer["Draw Result Consumer"]
+    DrawConsumer -->|"transaction"| MySQL
+    MySQL --> Outbox["Outbox Scanner"]
+    Outbox --> RabbitMQ
+    RabbitMQ --> AwardConsumer["Award Consumer"]
+    AwardConsumer --> MySQL
+
+    Redis --> Stream["Redis Stream Recovery"]
+    Stream --> RabbitMQ
 ```
 
-## 目录结构
+Redis 负责请求热路径上的原子预占和恢复记录，MySQL 保存最终订单、额度、中奖记录和任务状态。RabbitMQ 与 Asynq 负责异步投递、重试和补偿。
 
-```
-prizeforge/
-├── cmd/
-│   ├── api/main.go              # 用户端 HTTP 服务入口
-│   ├── admin/main.go            # 运营后台 HTTP 服务入口
-│   └── cdc-sync/main.go         # CDC 同步服务入口
-├── configs/
-│   └── config.yaml              # 应用配置（Viper 热更新）
-├── internal/
-│   ├── domain/                  # 领域层（核心业务逻辑，框架无关）
-│   │   ├── activity/            # 活动、额度、库存、订单
-│   │   ├── award/               # 中奖记录、发奖任务
-│   │   ├── rebate/              # 签到返利、行为返利
-│   │   ├── strategy/            # 抽奖权重、规则链、规则树
-│   │   └── task/                # 任务调度
-│   ├── application/             # 应用层（薄编排，调用 domain）
-│   │   ├── api/                 # 用户端用例
-│   │   └── admin/               # 管理端用例
-│   ├── infrastructure/          # 基础设施层
-│   │   ├── adapter/             # MySQL、Redis、RabbitMQ、Asynq 适配器
-│   │   ├── dbutil/              # 数据库工具
-│   │   └── repository/          # 仓储实现（GORM、缓存、分库分表路由）
-│   │       ├── activityrepo/    # 活动仓储实现（package 名带 repo 后缀，避免与 domain/activity 重名）
-│   │       ├── awardrepo/
-│   │       ├── rebaterepo/
-│   │       ├── strategyrepo/
-│   │       ├── taskrepo/
-│   │       └── po/              # GORM 持久化对象（PO）
-│   ├── bootstrap/               # 依赖注入（组合根，区分 NewAPIApp / NewAdminApp）
-│   ├── cdc/                     # CDC 变更数据捕获（MySQL → ES，走环境变量配置）
-│   ├── job/                     # Asynq 任务处理器（sku 库存消费 / 发奖分发 / 策略奖品库存消费）
-│   ├── listener/                # RabbitMQ 消费者与监听器（库存归零 / 返利发奖 / 订单持久化）
-│   ├── metrics/                 # Prometheus 指标定义
-│   ├── middleware/              # HTTP 中间件（CORS、Prometheus、Auth、Degrade、RateLimiter）
-│   ├── shared/xerr/             # 统一错误定义
-│   └── worker/                  # Asynq 后台 worker
-├── server/
-│   └── http/                    # Gin HTTP 路由与处理器
-│       ├── api/                 # 用户端路由
-│       ├── admin/               # 管理端路由
-│       └── common/              # 中间件、请求/响应封装
-├── pkg/                         # 公共工具库
-│   ├── cache/                   # 缓存接口 + TinyLFU 本地缓存
-│   ├── config/                  # Viper 配置加载
-│   ├── logger/                  # Zap 日志
-│   ├── rabbitmq/                # RabbitMQ 事件封装
-│   └── xrand/                   # 安全随机数
-├── monitoring/                  # Grafana Dashboard + Prometheus 配置
-└── docker-compose.yaml
-```
+## 技术栈
 
-### 进程模型与配置说明
-
-- `cmd/api`：HTTP 服务 + Asynq worker + RabbitMQ consumer 一体进程（`bootstrap.NewAPIApp`）。需要 RabbitMQ 和 Asynq Redis 可达；RabbitMQ 连接失败时直接 fatal。
-- `cmd/admin`：仅 admin HTTP 服务（`bootstrap.NewAdminApp`），不建 RabbitMQ 连接、不启动 worker/consumer，可在无 RabbitMQ 的轻量环境启动。
-- `cmd/cdc-sync`：独立的 CDC sidecar，配置走**环境变量**（`cdc.LoadConfigFromEnv`，`CDC_*` 前缀），不依赖 `configs/config.yaml` 和 Viper，可单独部署，请勿改回 viper。
+| 类别 | 技术 |
+| --- | --- |
+| 服务 | Go 1.25、Gin、GORM |
+| 数据 | MySQL、Redis、TinyLFU |
+| 异步 | RabbitMQ、Asynq、Outbox |
+| 工程 | Viper、Zap、Prometheus、Grafana |
+| 扩展 | go-mysql CDC、Elasticsearch |
 
 ## 快速开始
 
-### 1. 启动基础设施
+### 环境要求
+
+- Go 1.25+
+- Docker
+- Docker Compose
+
+### 1. 启动开发依赖
+
+集成环境会启动临时 MySQL、Redis 和 RabbitMQ，并自动导入 `docs/sql/` 中的初始化脚本：
 
 ```bash
-docker compose up -d mysql redis rabbitmq prometheus grafana
+make integration-up
 ```
+
+默认连接信息：
+
+| 服务 | 地址 | 账号 |
+| --- | --- | --- |
+| MySQL | `127.0.0.1:13306` | `root / prizeforge-integration` |
+| Redis | `127.0.0.1:16379` | 无密码 |
+| RabbitMQ | `127.0.0.1:15673` | `prizeforge-integration / prizeforge-integration` |
 
 ### 2. 准备配置
 
@@ -135,139 +79,88 @@ docker compose up -d mysql redis rabbitmq prometheus grafana
 cp configs/config.example.yaml configs/config.yaml
 ```
 
-重点检查：
-- `data.database`：MySQL 分库分表配置
-- `data.redis`：Redis 连接（业务缓存 + 额度/库存）
-- `asynq`：Asynq 独立 Redis 配置
-- `rabbitmq`：消息队列连接和 topic
-- `server.http.addr` / `server.admin.addr`：服务监听地址
+将 `configs/config.yaml` 中的 MySQL、Redis、Asynq Redis 和 RabbitMQ 地址调整为上表的开发端口。生产环境可以使用 `PRIZEFORGE_` 前缀的环境变量覆盖敏感配置。
 
-### 3. 启动应用
+### 3. 启动服务
+
+分别在两个终端运行：
 
 ```bash
-# 启动 API 服务（用户端）
-go run ./cmd/api/
-
-# 启动 Admin 服务（管理端）
-go run ./cmd/admin/
-
-# 启动 CDC 同步服务
-go run ./cmd/cdc-sync/
+make run-api
 ```
-
-### 4. 服务端口
-
-| 服务 | 地址 |
-| --- | --- |
-| API HTTP | `0.0.0.0:8080` |
-| Admin HTTP | `0.0.0.0:8081` |
-| Metrics | `127.0.0.1:9091/metrics` |
-| Prometheus | `http://localhost:9090` |
-| Grafana | `http://localhost:3000` |
-
-API 与 Admin 都提供以下健康检查：
-
-| 路径 | 用途 |
-| --- | --- |
-| `/healthz` | 仅确认 HTTP 进程存活，不访问外部依赖 |
-| `/readyz` | 确认服务所需的 MySQL、Redis 等依赖可用；不可用时返回 `503` |
-
-API 的就绪检查覆盖 MySQL（默认库及全部分片）、业务 Redis、Asynq Redis 和 RabbitMQ；Admin 覆盖 MySQL 与业务 Redis。
-
-### 5. 接口示例
-
-活动装配（预热策略到缓存）：
 
 ```bash
-curl "http://localhost:8080/api/v1/raffle/strategy/armory?strategy_id=100001"
+make run-admin
 ```
 
-执行抽奖：
+默认端口：
+
+- API：`http://127.0.0.1:8080`
+- Admin：`http://127.0.0.1:8081`
+
+健康检查：
 
 ```bash
-curl -X POST "http://localhost:8080/api/v1/raffle/activity/draw" \
-  -H "Content-Type: application/json" \
-  -d '{"user_id":"10001","activity_id":100301,"request_id":"01K0DRAWEXAMPLE000000000001"}'
+curl http://127.0.0.1:8080/healthz
+curl http://127.0.0.1:8080/readyz
 ```
 
-查询用户活动账户：
+开发结束后销毁临时依赖：
 
 ```bash
-curl -X POST "http://localhost:8080/api/v1/raffle/activity/query_user_activity_account" \
-  -H "Content-Type: application/json" \
-  -d '{"user_id":"10001","activity_id":100301}'
+make integration-down
 ```
 
-签到返利：
+## 测试
 
 ```bash
-curl -X POST "http://localhost:8080/api/v1/raffle/activity/calendar_sign_rebate" \
-  -H "Content-Type: application/json" \
-  -d '{"user_id":"10001"}'
+# 格式、静态检查、单元测试和部署脚本测试
+make check
+
+# 启动真实 MySQL、Redis、RabbitMQ，运行集成测试并自动清理
+make integration-test
 ```
 
-## 生产部署
+CI 会在 `main` 分支推送和 Pull Request 时自动运行检查与集成测试。
 
-`.github/workflows/deploy-production.yml` 提供手动生产部署。工作流从 `production` Environment 读取 SSH 配置，将 `deploy/deploy.sh` 通过标准输入发送到服务器执行，不在服务器拉取或编译源码。
+## 压测
 
-部署脚本会依次校验 Compose，并在修改 `.env` 前准备 MySQL、Redis、RabbitMQ、API 和 Admin 的全部镜像。固定版本的基础设施镜像仅在服务器缺失时拉取，API/Admin 每次拉取目标版本。镜像准备完成后才更新 `IMAGE_TAG`、启动服务，并等待两个进程的 `/healthz` 和 `/readyz` 全部通过。启动或健康检查失败时恢复原来的 `IMAGE_TAG` 并重新创建 API/Admin 容器；数据库和中间件数据不会被修改。
+项目提供针对抽奖接口 `POST /api/v1/raffle/activity/draw` 的专用压测程序，支持准备测试数据和执行并发压测：
 
-首次使用时，在 GitHub Actions 中选择 `Deploy production`，输入已经推送到 ACR 的稳定版本号（例如 `v1.0.1`）。工作流仅接受 `v主版本.次版本.修订版本` 格式，不接受 `latest`。
+```bash
+go build -o ./bin/prizeforge-benchmark ./cmd/benchmark
 
-## 设计取舍
+./bin/prizeforge-benchmark prepare --help
+./bin/prizeforge-benchmark run --help
+```
 
-### MySQL 订单真相源，Redis 承担热点策略和库存
+完整用法见 [压测工具说明](cmd/benchmark/README.md)。
 
-用户额度与抽奖订单在同一个 MySQL 事务内提交，保证失败可恢复；Redis Lua 负责奖品库存预占，并以 `user_id + order_id` 做幂等。Redis 丢失只影响热点能力，不改变订单和中奖结果的最终真相。
+## 部署
 
-### 订单先占用，发奖最终一致
+- 推送 `v*` 标签后，GitHub Actions 会运行检查、集成测试并构建 API/Admin 镜像。
+- `.github/workflows/deploy-production.yml` 支持手动选择镜像版本部署。
+- `deploy/deploy.sh` 会预拉取镜像、更新服务、检查 `/healthz` 与 `/readyz`，失败时自动回滚应用版本。
+- 生产 Compose、配置模板和部署脚本位于 [`deploy/`](deploy/)。
 
-接口同步完成两次事务：第一次扣额度并创建订单，第二次保存中奖结果、发奖 task、库存同步 task 和成功状态。实际发奖、数据库库存同步通过 task 表、RabbitMQ、Asynq 异步推进。
+## 项目结构
 
-### 规则链 + 规则树拆分前后置逻辑
+```text
+cmd/                    服务与压测程序入口
+internal/application/   应用编排
+internal/domain/        活动、策略、奖励、返利、任务领域
+internal/infrastructure/数据库、缓存、消息队列与仓储实现
+internal/listener/      RabbitMQ 消费者
+internal/job/           Asynq 与补偿任务
+server/http/            Gin 路由和 Handler
+pkg/                    通用配置、日志、缓存和事件组件
+tests/integration/      真实依赖集成测试
+deploy/                 生产 Compose 与部署脚本
+docs/                   数据库脚本和工程问题记录
+```
 
-黑名单、权重等前置规则适合在抽奖前快速接管；库存、次数锁、兜底奖品等后置约束适合在奖品候选产生后通过规则树判断。代码中对规则树根节点和规则模型做了校验，防止配置错误导致运行时异常。
+## 相关文档
 
-### 分库分表按用户维度路由
-
-用户账户、抽奖订单、中奖记录等高增长表按用户维度路由，降低单表压力并保持同一用户相关数据局部性。跨用户查询和运营聚合可通过 CDC/ES 同步方向扩展。
-
-### RabbitMQ 和 Asynq 分工
-
-RabbitMQ 适合跨模块事件通知，例如库存归零、发奖事件；Asynq 适合本服务内部延迟、重试和状态推进任务。两者并存增加运维复杂度，但可以更贴近不同异步场景。
-
-### 指标优先控制低基数
-
-Prometheus 指标覆盖 HTTP、抽奖结果、库存、MQ、Asynq 队列和 MySQL 连接池。标签设计避免 `user_id`、`order_id` 等高基数字段，优先保证监控系统稳定性。
-
-## 压测基线
-
-当前完整抽奖链路的压测工具、数据准备方法、参数说明和结果解读见
-[cmd/benchmark/README.md](cmd/benchmark/README.md)。
-
-[旧版全异步链路压测记录（无 Outbox）](docs/performance/legacy_async_no_outbox_baseline.md)
-保存了项目引入 Outbox 之前的一次历史压测基线：
-
-- 机器：单机 2C4G
-- 工具：wrk
-- 场景：额度和库存提前预热
-- QPS：约 6000 req/s
-- P99：约 62 ms
-- 错误率：0%
-
-这组数据用于说明轻链路、缓存预热场景下的吞吐上限，不应视为完整最终一致性链路的生产性能。
-
-## 技术栈
-
-| 类别 | 选型 |
-| --- | --- |
-| Web 框架 | Gin |
-| ORM | GORM |
-| 缓存 | Redis + TinyLFU |
-| 消息队列 | RabbitMQ |
-| 任务队列 | Asynq |
-| 日志 | Zap + Lumberjack |
-| 配置 | Viper（文件热更新） |
-| 监控 | Prometheus + Grafana |
-| 数据库 | MySQL（分库分表） |
-| CDC | go-mysql → Elasticsearch |
+- [工程问题与解决记录](docs/problem_records.md)
+- [压测工具说明](cmd/benchmark/README.md)
+- [数据库初始化脚本](docs/sql/)

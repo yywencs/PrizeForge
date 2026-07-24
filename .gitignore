@@ -76,5 +76,5 @@ coverage.html
 *.coverprofile
 
 docs/prov/
+docs/performance/
 docs/sql/migrations/
-
