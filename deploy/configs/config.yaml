@@ -14,10 +14,15 @@ rabbitmq:
   listener:
     simple:
       prefetch: 1
+      default_concurrency: 1
+      concurrency:
+        draw_result_queue: 8
+        send_award_queue: 4
   topic:
     activity_sku_stock_zero: activity_sku_stock_zero
     send_award: send_award
     send_rebate: send_rebate
+    draw_result: draw_result
 
 data:
   mysql:

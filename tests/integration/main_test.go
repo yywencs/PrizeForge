@@ -122,6 +122,12 @@ func TestMain(m *testing.M) {
 		Port:      rabbitMQPort,
 		Username:  rabbitMQUser,
 		Password:  rabbitMQPassword,
+		Topic: config.RabbitMQTopicConfig{
+			ActivitySkuStockZero: "activity_sku_stock_zero",
+			SendAward:            "send_award",
+			SendRebate:           "send_rebate",
+			DrawResult:           "draw_result",
+		},
 	}
 	integrationRabbitMQConnection, err = adapter.NewConnection(integrationRabbitMQConfig)
 	if err != nil {

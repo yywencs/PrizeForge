@@ -9,12 +9,6 @@ const (
 	// TaskTypeActivityStateSync 定义活动状态同步任务类型
 	TaskTypeActivityStateSync = "activity:state_sync"
 
-	// ActivitySkuStockZeroTopic 定义活动SKU库存归零消息Topic
-	ActivitySkuStockZeroTopic = "activity_sku_stock_zero_topic"
-
-	ActivityAwardSendTopic = "activity_award_send_topic"
-	DrawResultTopic        = "draw_result"
-
 	// TaskTypeDrawResultPublish 定义 Redis Stream 抽奖结果补偿发布任务。
 	TaskTypeDrawResultPublish = "activity:draw_result_publish"
 )

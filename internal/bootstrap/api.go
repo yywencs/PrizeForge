@@ -135,6 +135,10 @@ func NewAPIApp() (*HTTPApp, error) {
 	asynqClient := b.asynqClient
 	strategySvc := b.strategySvc
 
+	if err := cfg.RabbitMQ.Topic.Validate(); err != nil {
+		return nil, fmt.Errorf("rabbitmq topic config: %w", err)
+	}
+
 	// RabbitMQ 连接 + publisher（API 链路强依赖）
 	conn, err := adapter.NewConnection(&cfg.RabbitMQ)
 	if err != nil {
@@ -178,8 +182,16 @@ func NewAPIApp() (*HTTPApp, error) {
 
 	// Asynq worker + RabbitMQ consumer
 	asynqWorker := worker.NewAsynqWorker(&cfg.Asynq, skuStockJob, sendAwardMsgJob, strategyAwardStockJob, drawResultRecoveryJob)
-	rabbitMQConsumer := listener.NewRabbitMQConsumer(conn, stockListener, rebateListener, drawResultListener)
-	rabbitMQConsumer.RegisterListener(award.SendAwardTopic, sendAwardListener)
+	rabbitMQConsumer := listener.NewRabbitMQConsumer(
+		conn,
+		listener.WithPrefetch(cfg.RabbitMQ.Listener.Simple.Prefetch),
+		listener.WithDefaultConcurrency(cfg.RabbitMQ.Listener.Simple.DefaultConcurrency),
+		listener.WithQueueConcurrency(cfg.RabbitMQ.Listener.Simple.Concurrency),
+	)
+	rabbitMQConsumer.RegisterListener(cfg.RabbitMQ.Topic.ActivitySkuStockZero, stockListener)
+	rabbitMQConsumer.RegisterListener(cfg.RabbitMQ.Topic.SendRebate, rebateListener)
+	rabbitMQConsumer.RegisterListener(cfg.RabbitMQ.Topic.DrawResult, drawResultListener)
+	rabbitMQConsumer.RegisterListener(cfg.RabbitMQ.Topic.SendAward, sendAwardListener)
 
 	// application usecases
 	apiStrategyUsecase := api.NewStrategyUsecase(strategySvc)

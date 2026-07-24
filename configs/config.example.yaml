@@ -13,11 +13,16 @@ rabbitmq:
   password: password
   listener:
     simple:
-      prefetch: 1 # 每次投递n个消息，消费完在投递n个
+      prefetch: 1 # 每个消费者同一时间只处理一条未确认消息
+      default_concurrency: 1
+      concurrency:
+        draw_result_queue: 8
+        send_award_queue: 4
   topic:
     activity_sku_stock_zero: "activity_sku_stock_zero"
     send_award: "send_award"
     send_rebate: "send_rebate"
+    draw_result: "draw_result"
 
 data:
   mysql:

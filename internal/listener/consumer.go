@@ -5,13 +5,16 @@ import (
 	"fmt"
 	"time"
 
-	"prizeforge/internal/domain/activity"
 	"prizeforge/pkg/logger"
 
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
-const defaultMessageHandleTimeout = 30 * time.Second
+const (
+	defaultMessageHandleTimeout = 30 * time.Second
+	defaultPrefetchCount        = 1
+	defaultConsumerConcurrency  = 1
+)
 
 // Listener 是 RabbitMQ 消息处理器的统一接口。
 //
@@ -33,43 +36,72 @@ type Listener interface {
 //
 // 使用方式：
 //
-//	consumer := NewRabbitMQConsumer(conn, stockLsn, rebateLsn, drawResultLsn)
+//	consumer := NewRabbitMQConsumer(conn)
+//	consumer.RegisterListener(stockTopic, stockLsn)
 //	go consumer.Start(ctx)
 //	defer consumer.Shutdown()
 type RabbitMQConsumer struct {
-	conn          *amqp.Connection    // RabbitMQ 连接（复用自 bootstrap 创建的连接）
-	listeners     map[string]Listener // topic → Listener 映射
-	channels      []*amqp.Channel     // 所有打开的 channel，Shutdown 时逐个关闭
-	handleTimeout time.Duration       // 单条消息处理上限，防止一个调用永久占住消费者
+	conn               *amqp.Connection    // RabbitMQ 连接（复用自 bootstrap 创建的连接）
+	listeners          map[string]Listener // topic → Listener 映射
+	queueConcurrency   map[string]int      // queue → 独立 Channel/消费 goroutine 数
+	channels           []*amqp.Channel     // 所有打开的 channel，Shutdown 时逐个关闭
+	prefetch           int                 // 每个 Channel 最多允许的未确认消息数
+	defaultConcurrency int                 // 未单独配置队列时使用的消费者并发数
+	handleTimeout      time.Duration       // 单条消息处理上限，防止一个调用永久占住消费者
 }
 
-// NewRabbitMQConsumer 创建 RabbitMQConsumer 并注册 Activity 领域的三个基础 topic。
-// 其他领域监听器（例如 send_award）由 bootstrap 通过 RegisterListener 显式注册。
-//
-// Topic 与 Listener 对应关系：
-//   - activity_sku_stock_zero_topic → ActivityStockListener（库存归零）
-//   - activity_award_send_topic      → RebateListener（返利发奖）
-//   - draw_result                    → DrawResultListener（完整抽奖结果事务落库）
+// ConsumerOption 定制 RabbitMQ 消费端的 QoS 和队列并发度。
+type ConsumerOption func(*RabbitMQConsumer)
+
+// WithPrefetch 设置每个消费 Channel 的未确认消息上限；非法值回退为 1。
+func WithPrefetch(prefetch int) ConsumerOption {
+	return func(c *RabbitMQConsumer) {
+		if prefetch > 0 {
+			c.prefetch = prefetch
+		}
+	}
+}
+
+// WithDefaultConcurrency 设置未单独配置队列时的消费者并发数；非法值回退为 1。
+func WithDefaultConcurrency(concurrency int) ConsumerOption {
+	return func(c *RabbitMQConsumer) {
+		if concurrency > 0 {
+			c.defaultConcurrency = concurrency
+		}
+	}
+}
+
+// WithQueueConcurrency 设置 queue → 消费者并发数映射。
+// 空队列名和非正数配置会被忽略，避免意外启动零个消费者。
+func WithQueueConcurrency(concurrency map[string]int) ConsumerOption {
+	return func(c *RabbitMQConsumer) {
+		for queue, count := range concurrency {
+			if queue != "" && count > 0 {
+				c.queueConcurrency[queue] = count
+			}
+		}
+	}
+}
+
+// NewRabbitMQConsumer 创建通用 RabbitMQConsumer。
+// 所有 topic → Listener 映射由 bootstrap 从同一份 RabbitMQ topic 配置显式注册，
+// 避免生产端使用配置、消费端使用硬编码常量而发生 Exchange 名称漂移。
 func NewRabbitMQConsumer(
 	conn *amqp.Connection,
-	stockListener *ActivityStockListener,
-	rebateListener *RebateListener,
-	drawResultListener *DrawResultListener,
+	options ...ConsumerOption,
 ) *RabbitMQConsumer {
 	c := &RabbitMQConsumer{
-		conn:          conn,
-		listeners:     make(map[string]Listener),
-		handleTimeout: defaultMessageHandleTimeout,
+		conn:               conn,
+		listeners:          make(map[string]Listener),
+		queueConcurrency:   make(map[string]int),
+		prefetch:           defaultPrefetchCount,
+		defaultConcurrency: defaultConsumerConcurrency,
+		handleTimeout:      defaultMessageHandleTimeout,
 	}
-
-	if stockListener != nil {
-		c.RegisterListener(activity.ActivitySkuStockZeroTopic, stockListener)
-	}
-	if rebateListener != nil {
-		c.RegisterListener(activity.ActivityAwardSendTopic, rebateListener)
-	}
-	if drawResultListener != nil {
-		c.RegisterListener(activity.DrawResultTopic, drawResultListener)
+	for _, option := range options {
+		if option != nil {
+			option(c)
+		}
 	}
 
 	return c
@@ -81,12 +113,16 @@ func (c *RabbitMQConsumer) RegisterListener(topic string, l Listener) {
 	c.listeners[topic] = l
 }
 
-// Start 为每个已注册的 topic 启动独立的消费者 goroutine。
-// 任一 topic 启动失败则立即返回错误。
+// Start 按 topic 配置的并发度启动独立 Channel 和消费 goroutine。
+// 任一消费者启动失败则立即返回错误。
 func (c *RabbitMQConsumer) Start(ctx context.Context) error {
 	for topic, l := range c.listeners {
-		if err := c.startConsumer(topic, l); err != nil {
-			return fmt.Errorf("启动 topic %s 消费者失败: %w", topic, err)
+		concurrency := c.consumerConcurrency(topic)
+		for workerID := 1; workerID <= concurrency; workerID++ {
+			if err := c.startConsumer(topic, l, workerID, concurrency); err != nil {
+				return fmt.Errorf("启动 topic %s 消费者 %d/%d 失败: %w",
+					topic, workerID, concurrency, err)
+			}
 		}
 	}
 	return nil
@@ -104,19 +140,25 @@ func (c *RabbitMQConsumer) Shutdown() {
 	}
 }
 
-// startConsumer 为单个 topic 创建消费者。
+// startConsumer 为单个 topic 创建一套独立 Channel 和消费 goroutine。
 //
 // AMQP 拓扑：
 //
 //	Exchange: topic 名, type=fanout, durable
 //	Queue:    {topic}_queue, durable
 //	Binding:  queue ← exchange (routing key 为空，fanout 模式下忽略)
-//	QoS:      prefetch=1（逐条消费，配合手动 Ack/Nack）
-func (c *RabbitMQConsumer) startConsumer(topic string, l Listener) error {
+//	QoS:      每个 Channel 使用独立 prefetch，配合手动 Ack/Nack
+func (c *RabbitMQConsumer) startConsumer(topic string, l Listener, workerID, concurrency int) error {
 	channel, err := c.conn.Channel()
 	if err != nil {
 		return fmt.Errorf("打开 channel: %w", err)
 	}
+	started := false
+	defer func() {
+		if !started {
+			_ = channel.Close()
+		}
+	}()
 
 	// 声明 fanout 交换机（持久化，生产者可能先于消费者启动）
 	if err := channel.ExchangeDeclare(
@@ -149,8 +191,8 @@ func (c *RabbitMQConsumer) startConsumer(topic string, l Listener) error {
 		return fmt.Errorf("绑定队列: %w", err)
 	}
 
-	// prefetch=1：每次只推送一条消息，处理完 Ack 后才推送下一条
-	if err := channel.Qos(1, 0, false); err != nil {
+	// 每个并行消费者使用独立 Channel，避免并发处理共享 ACK 状态。
+	if err := channel.Qos(c.prefetchCount(), 0, false); err != nil {
 		return fmt.Errorf("设置 QoS: %w", err)
 	}
 
@@ -171,8 +213,15 @@ func (c *RabbitMQConsumer) startConsumer(topic string, l Listener) error {
 	go c.handle(msgs, l)
 
 	c.channels = append(c.channels, channel)
+	started = true
 
-	logger.Info("RabbitMQ 消费者启动成功", "queue", q.Name)
+	logger.Info(
+		"RabbitMQ 消费者启动成功",
+		"queue", q.Name,
+		"worker", workerID,
+		"concurrency", concurrency,
+		"prefetch", c.prefetchCount(),
+	)
 	return nil
 }
 
@@ -218,4 +267,21 @@ func (c *RabbitMQConsumer) messageHandleTimeout() time.Duration {
 		return c.handleTimeout
 	}
 	return defaultMessageHandleTimeout
+}
+
+func (c *RabbitMQConsumer) prefetchCount() int {
+	if c.prefetch > 0 {
+		return c.prefetch
+	}
+	return defaultPrefetchCount
+}
+
+func (c *RabbitMQConsumer) consumerConcurrency(topic string) int {
+	if concurrency := c.queueConcurrency[topic+"_queue"]; concurrency > 0 {
+		return concurrency
+	}
+	if c.defaultConcurrency > 0 {
+		return c.defaultConcurrency
+	}
+	return defaultConsumerConcurrency
 }

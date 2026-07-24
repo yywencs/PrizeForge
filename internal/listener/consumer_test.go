@@ -48,6 +48,54 @@ func (contextTimeoutListener) Handle(ctx context.Context, _ []byte) (bool, error
 	return true, ctx.Err()
 }
 
+// TestRabbitMQConsumerUsesQueueConcurrencyMap 验证每个队列可以通过统一映射配置独立并发度，
+// 未配置队列使用默认并发数，并且 prefetch 使用显式配置。
+func TestRabbitMQConsumerUsesQueueConcurrencyMap(t *testing.T) {
+	consumer := NewRabbitMQConsumer(
+		nil,
+		WithPrefetch(2),
+		WithDefaultConcurrency(2),
+		WithQueueConcurrency(map[string]int{
+			"draw_result_queue": 8,
+			"send_award_queue":  4,
+		}),
+	)
+
+	if got := consumer.prefetchCount(); got != 2 {
+		t.Fatalf("prefetchCount() = %d, want 2", got)
+	}
+	if got := consumer.consumerConcurrency("draw_result"); got != 8 {
+		t.Fatalf("draw_result concurrency = %d, want 8", got)
+	}
+	if got := consumer.consumerConcurrency("send_award"); got != 4 {
+		t.Fatalf("send_award concurrency = %d, want 4", got)
+	}
+	if got := consumer.consumerConcurrency("activity_sku_stock_zero_topic"); got != 2 {
+		t.Fatalf("unconfigured topic concurrency = %d, want 2", got)
+	}
+}
+
+// TestRabbitMQConsumerFallsBackFromInvalidOptions 验证非法 prefetch 和并发度
+// 不会产生零消费者，而是回退到安全的单消息、单消费者配置。
+func TestRabbitMQConsumerFallsBackFromInvalidOptions(t *testing.T) {
+	consumer := NewRabbitMQConsumer(
+		nil,
+		WithPrefetch(0),
+		WithDefaultConcurrency(0),
+		WithQueueConcurrency(map[string]int{
+			"draw_result_queue": 0,
+			"":                  8,
+		}),
+	)
+
+	if got := consumer.prefetchCount(); got != 1 {
+		t.Fatalf("prefetchCount() = %d, want 1", got)
+	}
+	if got := consumer.consumerConcurrency("draw_result"); got != 1 {
+		t.Fatalf("draw_result concurrency = %d, want 1", got)
+	}
+}
+
 // TestRabbitMQConsumerRejectsMalformedMessageWithoutRequeue 验证非法消息会被视为永久错误并直接丢弃，不会 Ack 或重新入队。
 func TestRabbitMQConsumerRejectsMalformedMessageWithoutRequeue(t *testing.T) {
 	acknowledger := &recordingAcknowledger{}

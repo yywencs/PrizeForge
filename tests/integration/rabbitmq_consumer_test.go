@@ -34,7 +34,7 @@ func TestRabbitMQConsumerDispatchesStockZeroEventAndAcknowledges(t *testing.T) {
 	if err != nil {
 		t.Fatalf("connect RabbitMQ consumer test: %v", err)
 	}
-	consumer := listener.NewRabbitMQConsumer(connection, nil, nil, nil)
+	consumer := listener.NewRabbitMQConsumer(connection)
 	t.Cleanup(consumer.Shutdown)
 
 	skuID := newIntegrationRedisActivityID(t)
@@ -65,13 +65,19 @@ func TestRabbitMQConsumerDispatchesStockZeroEventAndAcknowledges(t *testing.T) {
 		t.Fatalf("start RabbitMQ consumer: %v", err)
 	}
 
-	publisher := newIntegrationTopicPublisher(t, connection)
+	rabbitPublisher, err := adapter.NewRabbitMQPublisher(connection)
+	if err != nil {
+		t.Fatalf("create stock-zero publisher: %v", err)
+	}
+	publisherConfig := *integrationRabbitMQConfig
+	publisherConfig.Topic.ActivitySkuStockZero = topic
+	publisher := adapter.NewPublisher(rabbitPublisher, &publisherConfig)
 	firstEvent := rabbitmq.NewBaseEvent(skuID)
 	secondEvent := rabbitmq.NewBaseEvent(skuID)
-	if err := publisher.PublishTopic(ctx, topic, firstEvent); err != nil {
+	if err := publisher.PublishStockZero(ctx, firstEvent); err != nil {
 		t.Fatalf("publish first stock-zero event: %v", err)
 	}
-	if err := publisher.PublishTopic(ctx, topic, secondEvent); err != nil {
+	if err := publisher.PublishStockZero(ctx, secondEvent); err != nil {
 		t.Fatalf("publish second stock-zero event: %v", err)
 	}
 
@@ -90,6 +96,75 @@ func TestRabbitMQConsumerDispatchesStockZeroEventAndAcknowledges(t *testing.T) {
 	}
 }
 
+// TestRabbitMQConsumerProcessesOneQueueWithMultipleIndependentChannels 验证同一队列
+// 配置三个消费者后，prefetch=1 时仍能同时进入三个阻塞中的 Listener。
+func TestRabbitMQConsumerProcessesOneQueueWithMultipleIndependentChannels(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	topic := "prizeforge.integration.consumer.concurrent." + xrand.RandomNumeric(12)
+	trackIntegrationRabbitMQTopology(t, topic)
+	connection, err := adapter.NewConnection(integrationRabbitMQConfig)
+	if err != nil {
+		t.Fatalf("connect RabbitMQ concurrent consumer test: %v", err)
+	}
+	consumer := listener.NewRabbitMQConsumer(
+		connection,
+		listener.WithPrefetch(1),
+		listener.WithQueueConcurrency(map[string]int{topic + "_queue": 3}),
+	)
+	t.Cleanup(consumer.Shutdown)
+
+	blockingListener := newIntegrationBlockingListener(3)
+	var releaseOnce sync.Once
+	t.Cleanup(func() {
+		releaseOnce.Do(func() { close(blockingListener.release) })
+	})
+	consumer.RegisterListener(topic, blockingListener)
+	if err := consumer.Start(ctx); err != nil {
+		t.Fatalf("start concurrent RabbitMQ consumer: %v", err)
+	}
+
+	channel, err := connection.Channel()
+	if err != nil {
+		t.Fatalf("open queue inspection channel: %v", err)
+	}
+	queue, err := channel.QueueInspect(topic + "_queue")
+	_ = channel.Close()
+	if err != nil {
+		t.Fatalf("inspect concurrent consumer queue: %v", err)
+	}
+	if queue.Consumers != 3 {
+		t.Fatalf("queue consumers = %d, want 3", queue.Consumers)
+	}
+
+	publisher := newIntegrationTopicPublisher(t, connection)
+	for i := 1; i <= 3; i++ {
+		if err := publisher.PublishTopic(ctx, topic, rabbitmq.NewBaseEvent(int64(i))); err != nil {
+			t.Fatalf("publish concurrent event %d: %v", i, err)
+		}
+	}
+
+	for i := 1; i <= 3; i++ {
+		select {
+		case <-blockingListener.started:
+		case <-ctx.Done():
+			t.Fatalf("only %d/3 listeners entered concurrently: %v", i-1, ctx.Err())
+		}
+	}
+	releaseOnce.Do(func() { close(blockingListener.release) })
+	for i := 1; i <= 3; i++ {
+		select {
+		case err := <-blockingListener.completed:
+			if err != nil {
+				t.Fatalf("concurrent listener %d error = %v", i, err)
+			}
+		case <-ctx.Done():
+			t.Fatalf("wait for concurrent listener %d: %v", i, ctx.Err())
+		}
+	}
+}
+
 // TestRabbitMQConsumerPersistsDrawResultAndAcknowledges 验证完整抽奖结果经过真实 RabbitMQ 后，
 // 会在一个事务内落订单、中奖记录、发奖 Outbox，并同步扣减数据库总、月、日额度。
 func TestRabbitMQConsumerPersistsDrawResultAndAcknowledges(t *testing.T) {
@@ -101,13 +176,13 @@ func TestRabbitMQConsumerPersistsDrawResultAndAcknowledges(t *testing.T) {
 	order := fixture.order(xrand.RandomNumeric(12), "request-"+xrand.RandomNumeric(12))
 	result := fixture.drawResult(order)
 
-	topic := activity.DrawResultTopic
+	topic := "prizeforge.integration.consumer.draw-result." + xrand.RandomNumeric(12)
 	trackIntegrationRabbitMQTopology(t, topic)
 	connection, err := adapter.NewConnection(integrationRabbitMQConfig)
 	if err != nil {
 		t.Fatalf("connect RabbitMQ draw-result test: %v", err)
 	}
-	consumer := listener.NewRabbitMQConsumer(connection, nil, nil, nil)
+	consumer := listener.NewRabbitMQConsumer(connection)
 	t.Cleanup(consumer.Shutdown)
 	partakeUsecase := activity.NewActivityPartakeUsecase(repository)
 	recordingListener := newIntegrationRecordingListener(listener.NewDrawResultListener(partakeUsecase), 1)
@@ -120,7 +195,9 @@ func TestRabbitMQConsumerPersistsDrawResultAndAcknowledges(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create draw-result publisher: %v", err)
 	}
-	publisher := adapter.NewPublisher(rabbitPublisher, integrationRabbitMQConfig)
+	publisherConfig := *integrationRabbitMQConfig
+	publisherConfig.Topic.DrawResult = topic
+	publisher := adapter.NewPublisher(rabbitPublisher, &publisherConfig)
 	event := &rabbitmq.BaseEvent{
 		ID:        "draw:" + result.UserID + ":" + result.OrderID,
 		Timestamp: result.AwardTime,
@@ -165,7 +242,7 @@ func TestRabbitMQConsumerRequeuesRetryableFailure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("connect RabbitMQ retry test: %v", err)
 	}
-	consumer := listener.NewRabbitMQConsumer(connection, nil, nil, nil)
+	consumer := listener.NewRabbitMQConsumer(connection)
 	t.Cleanup(consumer.Shutdown)
 	retryListener := newIntegrationRetryOnceListener()
 	consumer.RegisterListener(topic, retryListener)
@@ -211,7 +288,7 @@ func TestRabbitMQConsumerCompletesAwardAndAcknowledgesIdempotently(t *testing.T)
 	if err != nil {
 		t.Fatalf("connect RabbitMQ send-award test: %v", err)
 	}
-	consumer := listener.NewRabbitMQConsumer(connection, nil, nil, nil)
+	consumer := listener.NewRabbitMQConsumer(connection)
 	t.Cleanup(consumer.Shutdown)
 	recordingListener := newIntegrationRecordingListener(listener.NewSendAwardListener(awardUsecase), 2)
 	consumer.RegisterListener(topic, recordingListener)
@@ -229,9 +306,15 @@ func TestRabbitMQConsumerCompletesAwardAndAcknowledgesIdempotently(t *testing.T)
 			AwardTitle: "集成测试奖品",
 		},
 	}
-	publisher := newIntegrationTopicPublisher(t, connection)
+	rabbitPublisher, err := adapter.NewRabbitMQPublisher(connection)
+	if err != nil {
+		t.Fatalf("create send-award publisher: %v", err)
+	}
+	publisherConfig := *integrationRabbitMQConfig
+	publisherConfig.Topic.SendAward = topic
+	publisher := adapter.NewPublisher(rabbitPublisher, &publisherConfig)
 	for attempt := 1; attempt <= 2; attempt++ {
-		if err := publisher.PublishTopic(ctx, topic, event); err != nil {
+		if err := publisher.PublishSendAward(ctx, event); err != nil {
 			t.Fatalf("publish send-award event attempt %d: %v", attempt, err)
 		}
 		call := waitIntegrationListenerCall(t, ctx, recordingListener.calls)
@@ -256,6 +339,32 @@ type integrationListenerCall struct {
 	retry   bool
 	err     error
 	attempt int
+}
+
+type integrationBlockingListener struct {
+	started   chan struct{}
+	release   chan struct{}
+	completed chan error
+}
+
+func newIntegrationBlockingListener(concurrency int) *integrationBlockingListener {
+	return &integrationBlockingListener{
+		started:   make(chan struct{}, concurrency),
+		release:   make(chan struct{}),
+		completed: make(chan error, concurrency),
+	}
+}
+
+func (l *integrationBlockingListener) Handle(ctx context.Context, _ []byte) (bool, error) {
+	l.started <- struct{}{}
+	select {
+	case <-l.release:
+		l.completed <- nil
+		return false, nil
+	case <-ctx.Done():
+		l.completed <- ctx.Err()
+		return true, ctx.Err()
+	}
 }
 
 type integrationRecordingListener struct {

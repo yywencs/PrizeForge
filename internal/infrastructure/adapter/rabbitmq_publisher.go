@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"prizeforge/internal/domain/activity"
 	"prizeforge/internal/metrics"
 	"prizeforge/pkg/config"
 	"prizeforge/pkg/rabbitmq"
@@ -116,7 +115,7 @@ type Publisher struct {
 }
 
 // NewPublisher creates a typed publisher from config.
-func NewPublisher(client *RabbitMQPublisher, cfg *config.RabbitMQConfig) *Publisher {
+func NewPublisher(client eventPublisher, cfg *config.RabbitMQConfig) *Publisher {
 	return &Publisher{
 		client: client,
 		topic:  cfg.Topic,
@@ -140,5 +139,5 @@ func (p *Publisher) PublishTopic(ctx context.Context, topic string, event *rabbi
 }
 
 func (p *Publisher) PublishDrawResult(ctx context.Context, event *rabbitmq.BaseEvent) error {
-	return p.client.Publish(ctx, activity.DrawResultTopic, event)
+	return p.client.Publish(ctx, p.topic.DrawResult, event)
 }

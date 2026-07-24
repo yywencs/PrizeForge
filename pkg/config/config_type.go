@@ -1,6 +1,10 @@
 package config
 
-import "time"
+import (
+	"fmt"
+	"strings"
+	"time"
+)
 
 // Config 对应整个 config.yaml 文件的根节点
 type Config struct {
@@ -81,13 +85,36 @@ type RabbitMQListener struct {
 }
 
 type RabbitMQSimple struct {
-	Prefetch int `mapstructure:"prefetch"`
+	Prefetch           int            `mapstructure:"prefetch"`
+	DefaultConcurrency int            `mapstructure:"default_concurrency"`
+	Concurrency        map[string]int `mapstructure:"concurrency"`
 }
 
 type RabbitMQTopicConfig struct {
 	ActivitySkuStockZero string `mapstructure:"activity_sku_stock_zero"`
 	SendAward            string `mapstructure:"send_award"`
 	SendRebate           string `mapstructure:"send_rebate"`
+	DrawResult           string `mapstructure:"draw_result"`
+}
+
+func (c RabbitMQTopicConfig) Validate() error {
+	topics := map[string]string{
+		"activity_sku_stock_zero": c.ActivitySkuStockZero,
+		"send_award":              c.SendAward,
+		"send_rebate":             c.SendRebate,
+		"draw_result":             c.DrawResult,
+	}
+	seen := make(map[string]string, len(topics))
+	for name, topic := range topics {
+		if strings.TrimSpace(topic) == "" {
+			return fmt.Errorf("%s is required", name)
+		}
+		if previous, exists := seen[topic]; exists {
+			return fmt.Errorf("%s and %s must use different topics: %q", previous, name, topic)
+		}
+		seen[topic] = name
+	}
+	return nil
 }
 
 // --- Asynq 部分 ---

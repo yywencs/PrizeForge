@@ -3,11 +3,13 @@ package taskrepo
 import (
 	"context"
 	"fmt"
+	"time"
+
+	"prizeforge/internal/domain/award"
 	"prizeforge/internal/domain/task"
 	"prizeforge/internal/infrastructure/adapter"
 	"prizeforge/internal/infrastructure/repository/po"
 	"prizeforge/pkg/rabbitmq"
-	"time"
 )
 
 const failedTaskRetryDelay = 6 * time.Minute
@@ -16,10 +18,15 @@ const outboxStateUpdateBatchSize = 500
 
 type TaskRepository struct {
 	routerDB  *adapter.DBRouter
-	publisher *adapter.Publisher
+	publisher taskEventPublisher
 }
 
-func NewTaskRepository(routerDB *adapter.DBRouter, publisher *adapter.Publisher) task.Repo {
+type taskEventPublisher interface {
+	PublishSendAward(context.Context, *rabbitmq.BaseEvent) error
+	PublishTopic(context.Context, string, *rabbitmq.BaseEvent) error
+}
+
+func NewTaskRepository(routerDB *adapter.DBRouter, publisher taskEventPublisher) task.Repo {
 	return &TaskRepository{
 		routerDB:  routerDB,
 		publisher: publisher,
@@ -97,5 +104,8 @@ func (r *TaskRepository) updateTaskStateBatch(ctx context.Context, dbIndex int, 
 }
 
 func (r *TaskRepository) SendMessage(ctx context.Context, topic string, event *rabbitmq.BaseEvent) error {
+	if topic == award.SendAwardTopic {
+		return r.publisher.PublishSendAward(ctx, event)
+	}
 	return r.publisher.PublishTopic(ctx, topic, event)
 }
