@@ -72,12 +72,17 @@ type EtcdConfig struct {
 // --- RabbitMQ 部分 ---
 
 type RabbitMQConfig struct {
-	Addresses string              `mapstructure:"addresses"`
-	Port      int                 `mapstructure:"port"`
-	Username  string              `mapstructure:"username"`
-	Password  string              `mapstructure:"password"`
-	Listener  RabbitMQListener    `mapstructure:"listener"`
-	Topic     RabbitMQTopicConfig `mapstructure:"topic"`
+	Addresses string                  `mapstructure:"addresses"`
+	Port      int                     `mapstructure:"port"`
+	Username  string                  `mapstructure:"username"`
+	Password  string                  `mapstructure:"password"`
+	Publisher RabbitMQPublisherConfig `mapstructure:"publisher"`
+	Listener  RabbitMQListener        `mapstructure:"listener"`
+	Topic     RabbitMQTopicConfig     `mapstructure:"topic"`
+}
+
+type RabbitMQPublisherConfig struct {
+	PoolSize int `mapstructure:"pool_size"`
 }
 
 type RabbitMQListener struct {

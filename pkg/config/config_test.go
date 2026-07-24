@@ -21,6 +21,8 @@ asynq:
 rabbitmq:
   username: file-user
   password: file-rabbitmq-password
+  publisher:
+    pool_size: 8
   topic:
     activity_sku_stock_zero: file-stock-zero
     send_award: file-send-award
@@ -55,6 +57,7 @@ rabbitmq:
 	t.Setenv("PRIZEFORGE_ASYNQ_REDIS_PASSWORD", "env-asynq-password")
 	t.Setenv("PRIZEFORGE_RABBITMQ_USERNAME", "env-user")
 	t.Setenv("PRIZEFORGE_RABBITMQ_PASSWORD", "env-rabbitmq-password")
+	t.Setenv("PRIZEFORGE_RABBITMQ_PUBLISHER_POOL_SIZE", "6")
 	t.Setenv("PRIZEFORGE_RABBITMQ_TOPIC_ACTIVITY_SKU_STOCK_ZERO", "env-stock-zero")
 	t.Setenv("PRIZEFORGE_RABBITMQ_TOPIC_SEND_AWARD", "env-send-award")
 	t.Setenv("PRIZEFORGE_RABBITMQ_TOPIC_SEND_REBATE", "env-send-rebate")
@@ -76,6 +79,9 @@ rabbitmq:
 	}
 	if Conf.RabbitMQ.Username != "env-user" || Conf.RabbitMQ.Password != "env-rabbitmq-password" {
 		t.Fatalf("rabbitmq credentials were not overridden by environment")
+	}
+	if Conf.RabbitMQ.Publisher.PoolSize != 6 {
+		t.Fatalf("rabbitmq publisher pool size = %d, want 6", Conf.RabbitMQ.Publisher.PoolSize)
 	}
 	if Conf.RabbitMQ.Topic.ActivitySkuStockZero != "env-stock-zero" ||
 		Conf.RabbitMQ.Topic.SendAward != "env-send-award" ||

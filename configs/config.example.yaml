@@ -11,6 +11,8 @@ rabbitmq:
   port: 5672
   username: wen
   password: password
+  publisher:
+    pool_size: 8
   listener:
     simple:
       prefetch: 1 # 每个消费者同一时间只处理一条未确认消息

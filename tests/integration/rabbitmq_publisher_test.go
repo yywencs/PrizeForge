@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -23,7 +24,7 @@ func TestRabbitMQPublisherRoutesStockZeroEvent(t *testing.T) {
 	defer cancel()
 
 	exchangeName := "prizeforge.integration.stock-zero." + xrand.RandomNumeric(12)
-	rabbitPublisher, err := adapter.NewRabbitMQPublisher(integrationRabbitMQConnection)
+	rabbitPublisher, err := adapter.NewRabbitMQPublisher(integrationRabbitMQConnection, 1)
 	if err != nil {
 		t.Fatalf("NewRabbitMQPublisher() error = %v, want nil", err)
 	}
@@ -80,6 +81,77 @@ func TestRabbitMQPublisherRoutesStockZeroEvent(t *testing.T) {
 		}
 	case <-ctx.Done():
 		t.Fatalf("wait for RabbitMQ stock-zero delivery: %v", ctx.Err())
+	}
+}
+
+// TestRabbitMQPublisherPoolPublishesThroughIndependentChannels 验证真实 RabbitMQ 下
+// Channel 池能够并发发布一批持久化消息，并为每条消息取得 Broker Confirm。
+func TestRabbitMQPublisherPoolPublishesThroughIndependentChannels(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	topic := "prizeforge.integration.publisher.pool." + xrand.RandomNumeric(12)
+	trackIntegrationRabbitMQTopology(t, topic)
+	channel, err := integrationRabbitMQConnection.Channel()
+	if err != nil {
+		t.Fatalf("open RabbitMQ setup channel: %v", err)
+	}
+	t.Cleanup(func() { _ = channel.Close() })
+	if err := channel.ExchangeDeclare(topic, "fanout", true, false, false, false, nil); err != nil {
+		t.Fatalf("declare publisher pool exchange: %v", err)
+	}
+	queue, err := channel.QueueDeclare("", false, true, true, false, nil)
+	if err != nil {
+		t.Fatalf("declare publisher pool queue: %v", err)
+	}
+	if err := channel.QueueBind(queue.Name, "", topic, false, nil); err != nil {
+		t.Fatalf("bind publisher pool queue: %v", err)
+	}
+	deliveries, err := channel.Consume(queue.Name, "", true, true, false, false, nil)
+	if err != nil {
+		t.Fatalf("consume publisher pool queue: %v", err)
+	}
+
+	const (
+		poolSize     = 3
+		messageCount = 30
+	)
+	rabbitPublisher, err := adapter.NewRabbitMQPublisher(integrationRabbitMQConnection, poolSize)
+	if err != nil {
+		t.Fatalf("NewRabbitMQPublisher(pool=%d) error = %v", poolSize, err)
+	}
+
+	start := make(chan struct{})
+	results := make(chan error, messageCount)
+	var publishers sync.WaitGroup
+	for i := 0; i < messageCount; i++ {
+		publishers.Add(1)
+		go func(value int) {
+			defer publishers.Done()
+			<-start
+			results <- rabbitPublisher.Publish(ctx, topic, rabbitmq.NewBaseEvent(value))
+		}(i)
+	}
+	close(start)
+	publishers.Wait()
+	close(results)
+	for err := range results {
+		if err != nil {
+			t.Fatalf("pooled RabbitMQ Publish() error = %v, want nil", err)
+		}
+	}
+
+	received := 0
+	for received < messageCount {
+		select {
+		case _, ok := <-deliveries:
+			if !ok {
+				t.Fatalf("delivery channel closed after %d/%d messages", received, messageCount)
+			}
+			received++
+		case <-ctx.Done():
+			t.Fatalf("received %d/%d pooled messages: %v", received, messageCount, ctx.Err())
+		}
 	}
 }
 

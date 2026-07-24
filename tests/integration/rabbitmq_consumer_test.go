@@ -65,7 +65,7 @@ func TestRabbitMQConsumerDispatchesStockZeroEventAndAcknowledges(t *testing.T) {
 		t.Fatalf("start RabbitMQ consumer: %v", err)
 	}
 
-	rabbitPublisher, err := adapter.NewRabbitMQPublisher(connection)
+	rabbitPublisher, err := adapter.NewRabbitMQPublisher(connection, 1)
 	if err != nil {
 		t.Fatalf("create stock-zero publisher: %v", err)
 	}
@@ -191,7 +191,7 @@ func TestRabbitMQConsumerPersistsDrawResultAndAcknowledges(t *testing.T) {
 		t.Fatalf("start draw-result consumer: %v", err)
 	}
 
-	rabbitPublisher, err := adapter.NewRabbitMQPublisher(connection)
+	rabbitPublisher, err := adapter.NewRabbitMQPublisher(connection, 1)
 	if err != nil {
 		t.Fatalf("create draw-result publisher: %v", err)
 	}
@@ -306,7 +306,7 @@ func TestRabbitMQConsumerCompletesAwardAndAcknowledgesIdempotently(t *testing.T)
 			AwardTitle: "集成测试奖品",
 		},
 	}
-	rabbitPublisher, err := adapter.NewRabbitMQPublisher(connection)
+	rabbitPublisher, err := adapter.NewRabbitMQPublisher(connection, 1)
 	if err != nil {
 		t.Fatalf("create send-award publisher: %v", err)
 	}
@@ -416,7 +416,7 @@ func (l *integrationRetryOnceListener) Handle(_ context.Context, body []byte) (b
 
 func newIntegrationTopicPublisher(t *testing.T, connection *amqp.Connection) *adapter.Publisher {
 	t.Helper()
-	rabbitPublisher, err := adapter.NewRabbitMQPublisher(connection)
+	rabbitPublisher, err := adapter.NewRabbitMQPublisher(connection, 1)
 	if err != nil {
 		t.Fatalf("NewRabbitMQPublisher() error = %v, want nil", err)
 	}

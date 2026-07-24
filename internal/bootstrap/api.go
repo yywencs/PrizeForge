@@ -144,8 +144,9 @@ func NewAPIApp() (*HTTPApp, error) {
 	if err != nil {
 		return nil, fmt.Errorf("rabbitmq: %w", err)
 	}
-	rabbitPublisher, err := adapter.NewRabbitMQPublisher(conn)
+	rabbitPublisher, err := adapter.NewRabbitMQPublisher(conn, cfg.RabbitMQ.Publisher.PoolSize)
 	if err != nil {
+		_ = conn.Close()
 		return nil, fmt.Errorf("rabbitmq publisher: %w", err)
 	}
 	typedPublisher := adapter.NewPublisher(rabbitPublisher, &cfg.RabbitMQ)

@@ -11,6 +11,8 @@ rabbitmq:
   port: 5672
   username: prizeforge
   password: overridden_by_environment
+  publisher:
+    pool_size: 8
   listener:
     simple:
       prefetch: 1
